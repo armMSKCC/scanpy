@@ -1,11 +1,12 @@
 """Run Diffusion maps using the adaptive anisotropic kernel
 """
-from .. import logging as logg
 
-def palantir( adata ):
+from scanpy import logging as logg
 
+
+def palantir(adata):
     """
-    Run Diffusion maps using the adaptive anisotropic kernel [Setty27]_.
+    Run Diffusion maps using the adaptive anisotropic kernel [Setty18]_.
 
     Palantir is an algorithm to align cells along differentiation trajectories.
     Palantir models differentiation as a stochastic process where stem cells
@@ -15,51 +16,33 @@ def palantir( adata ):
     Palantir has been designed to work with multidimensional single cell data
     from diverse technologies such as Mass cytometry and single cell RNA-seq.
 
-    Full documentation can be found here https://github.com/dpeerlab/Palantir
+    .. note::
+        More information and bug reports `here <https://github.com/dpeerlab/Palantir>`__.
 
-    :param adata: :class:`~anndata.AnnData`, or Dataframe of cells X genes
+    Parameters
+    ----------
+    adata : :class:`~anndata.AnnData`
+        An AnnData object, or Dataframe of cells X genes.
 
-    :param normalize: `bool` (default: `False`), property setter passed to
-                      palantir to normalize using palantir method,
-                      `palantir.preprocess.normalize_counts`
+    Returns
+    -------
 
-    :param log_transform: `bool` (default: `False`), property setter passed to
-                          palantir. Some datasets show better signal in the log
-                          scale. Applied using `palantir.preprocess.log_transform`
+    `.uns['palantir_norm_data']` which is a `data_df` copy of adata if normalized
 
-    :param filter_low: `bool` (default: `False`), property setter passed to
-                       palantir to remove low molecule count cells and low
-                       detection genes
+    `pca_results` PCA projections and explained variance ratio of adata:
+    - `.uns['palantir_pca_results']['pca_projections']`
+    - `.uns['palantir_pca_results']['variance_ratio']`
 
-    :return:
-        `data_df` - DataFrame copy of adata, if normalized, stores normalized
+    `dm_res` Diffusion components, corresponding eigen values and diffusion operator:
+    - `.uns['palantir_diff_maps']['EigenVectors']`
+    - `.uns['palantir_diff_maps']['EigenValues']`
+    - `.uns['palantir_diff_maps']['T']`
 
-        `pca_results` - PCA projections and explained variance ratio of adata
+    `.uns['palantir_ms_data']` which is the `ms_data` - Multi scale data matrix
 
-        `dm_res` - Diffusion components, corresponding eigen values and the diffusion operator
+    `.uns['palantir_tsne']` which is `tsne` - tSNE on diffusion maps
 
-        `ms_data` - Multi scale data matrix
-
-        `tsne` - tSNE embedding of the data
-
-        `imp_df` - Imputed data matrix (MAGIC imputation)
-
-    :Return objects will be pushed to adata:
-        `data_df`       --> `adata.uns['palantir_norm_data']`, if normalized
-
-        `pca_results`   --> `adata.uns['palantir_pca_results']['pca_projections']`
-                            `adata.uns['palantir_pca_results']['variance_ratio']`
-
-        `dm_res`        --> `adata.uns['palantir_diff_maps']['T']`
-                            `adata.uns['palantir_diff_maps']['EigenValues']`
-                            `adata.uns['palantir_diff_maps']['EigenVectors']`
-
-        `ms_data`       --> `adata.uns['palantir_ms_data']`
-
-        `tsne`          --> `adata.uns['palantir_tsne']`
-
-        `imp_df`        --> `adata.uns['palantir_imp_df']`
-
+    `.uns['palantir_imp_df']` which is `imp_df` - Imputed data matrix (MAGIC imputation)
 
     Example
     -------
@@ -67,7 +50,7 @@ def palantir( adata ):
     >>> import scanpy.external as sce
     >>> import scanpy as sc
 
-    A sample data is available at https://github.com/dpeerlab/Palantir/tree/master/data
+    A sample data is available `here <https://github.com/dpeerlab/Palantir/tree/master/data>`_.
 
     To view the plots, it is recommended to run Jupyter notebook
 
@@ -125,19 +108,28 @@ def palantir( adata ):
 
     >>> d.palantir.plot.plot_diffusion_components(d.tsne, d.dm_res)
 
-    For further demonstration of palantir visualizations please follow the link
-    below:
+    **Visualizing Palantir results**
 
-    https://github.com/dpeerlab/Palantir/blob/master/notebooks/Palantir_sample_notebook.ipynb
+    Palantir can be run by specifying an approximate early cell. While Palantir
+    automatically determines the terminal states, they can also be specified using the
+    `termine_states` parameter.
 
-    that provides a comprehensive guide to draw *gene expression trends*,
-    amongst other things.
+    >>> start_cell = 'Run5_164698952452459'
+    >>> pr_res = d.palantir.core.run_palantir(d.ms_data, start_cell, num_waypoints=500)
+    >>> palantir.plot.plot_palantir_results(pr_res, d.tsne)
+
+    - note that a `start_cell` must be defined for every data set. The start cell for
+    this dataset was chosen based on high expression of CD34.
+
+    For further demonstration of palantir visualizations please follow this notebook
+    `Palantir_sample_notebook.ipynb <https://github.com/dpeerlab/Palantir/blob/master/notebooks/Palantir_sample_notebook.ipynb>`_.
+    It provides a comprehensive guide to draw *gene expression trends*, amongst other things.
 
     """
 
     logg.info('Palantir diffusion maps', r=True)
 
-    class _wrapper_cls( object ):
+    class _wrapper_cls(object):
         """
         A wrapper class to instantiate a new object that wraps `palantir` as an
         attribute reference attached to the class, together with other attribute
@@ -153,23 +145,26 @@ def palantir( adata ):
             - pre-processing of input data
         """
 
-        def __init__( self ,
-                                adata,
-                                func=None ,
-                                normalize = False,
-                                log_transform = False,
-                                filter_low = False
+        def __init__(self ,
+                     adata,
+                     func=None ,
+                     normalize = False,
+                     log_transform = False,
+                     filter_low = False
                     ):
-
             """
-            :input adata: AnnData, or Dataframe of cells X genes
-            :input func: function wrapper to import palantir (not to be used)
-            :input normalize: `bool` (default: `False`), property setter passed
-                              to palantir
-            :input log_transform: `bool` (default: `False`), property setter
-                                  passed to palantir
-            :input filter_low: `bool` (default: `False`), property setter passed
-                               to palantir
+            Parameters
+            ----------
+            adata : AnnData, or Dataframe of cells X genes
+            func : function wrapper to import palantir (not to be used)
+            normalize : `bool` (default: `False`)
+                property setter passed to palantir to normalize using palantir method
+                `palantir.preprocess.normalize_counts`.
+            log_transform : `bool` (default: `False`)
+                property setter passed to palantir. Some datasets show better signal in the log
+                scale. Applied using `palantir.preprocess.log_transform`
+            filter_low : `bool` (default: `False`)
+                property setter passed to palantir to remove low molecule count cells and low detection genes
             """
 
             # instantiate variables
@@ -191,14 +186,14 @@ def palantir( adata ):
             self.__call__()
             logg.info('palantir loaded ...', r=True)
 
-        def __call__( self ):
+        def __call__(self):
             """
             Call for function to import palantir and instantiate it as a class
             attribute
             """
             self.palantir = self.func()
 
-        def process( self ):
+        def process(self):
 
             """
             A method to run `palantir` on input Data Frame
@@ -239,30 +234,30 @@ def palantir( adata ):
             logg.info('End of processing, start plotting.', r=True)
 
         @property
-        def normalize( self ):
+        def normalize(self):
             return self._normalize
         @normalize.setter
-        def normalize( self , value ):
+        def normalize(self , value):
             if value is True:
                 self.data_df = self.palantir.preprocess.normalize_counts(self.data_df)
                 adata.uns['palantir_norm_data'] = self.data_df
                 logg.info('data normalized ...', r=True)
 
         @property
-        def log_transform( self ):
+        def log_transform(self):
             return self._log_transform
         @log_transform.setter
-        def log_transform( self , value ):
+        def log_transform(self , value):
             if value is True:
                 self.data_df = self.palantir.preprocess.log_transform(self.data_df)
                 adata.uns['palantir_norm_data'] = self.data_df
                 logg.info('data log transformed ...', r=True)
 
         @property
-        def filter_low( self ):
+        def filter_low(self):
             return self._filter_low
         @filter_low.setter
-        def filter_low( self , value ):
+        def filter_low(self , value):
             if value is True:
                 self.data_df = self.palantir.preprocess.filter_counts_data(self.data_df)
                 adata.uns['palantir_norm_data'] = self.data_df
@@ -271,20 +266,20 @@ def palantir( adata ):
                           r=True)
 
 
-    def wrapper_cls( adata, func=None ):
+    def wrapper_cls(adata, func=None):
         """
         Class wrapper to pass a function to the class alongside positional argument
         """
         if func:
-            return _wrapper_cls( func )
+            return _wrapper_cls(func)
         else:
-            def wrapper( func ):
-                return _wrapper_cls( adata, func )
+            def wrapper(func):
+                return _wrapper_cls(adata, func)
             return wrapper
 
     # import palantir and wrap it in a function passed to the wrapper class
     # this method allows passing positional argument of adata to `_wrapper_cls`
-    @wrapper_cls( adata )
+    @wrapper_cls(adata)
     def _run():
         import importlib
         try:
