@@ -1,20 +1,19 @@
-import os
 import numpy as np
 import pandas as pd
 import scipy
 import warnings
-from pandas.api.types import is_categorical_dtype
-import networkx as nx
-from matplotlib import pyplot as pl
-from matplotlib.colors import is_color_like
-from matplotlib import rcParams, ticker
 from collections import Iterable
+from typing import Optional, Union, List
+
+from pandas.api.types import is_categorical_dtype
+from matplotlib import pyplot as pl, rcParams, ticker
+from matplotlib.axes import Axes
+from matplotlib.colors import is_color_like
 
 from .. import _utils as utils
-from ... import utils as sc_utils
-from ... import settings
-from ... import logging as logg
 from .._utils import matrix
+from ... import utils as sc_utils, logging as logg
+from ..._settings import settings
 
 
 def paga_compare(
@@ -131,6 +130,8 @@ def paga_compare(
 
 
 def _compute_pos(adjacency_solid, layout=None, random_state=0, init_pos=None, adj_tree=None, root=0, layout_kwds={}):
+    import networkx as nx
+
     nx_g_solid = nx.Graph(adjacency_solid)
     if layout is None:
         layout = 'fr'
@@ -138,9 +139,11 @@ def _compute_pos(adjacency_solid, layout=None, random_state=0, init_pos=None, ad
         try:
             from fa2 import ForceAtlas2
         except:
-            logg.warn('Package \'fa2\' is not installed, falling back to layout \'fr\'.'
-                      'To use the faster and better ForceAtlas2 layout, '
-                      'install package \'fa2\' (`pip install fa2`).')
+            logg.warning(
+                "Package 'fa2' is not installed, falling back to layout 'fr'."
+                'To use the faster and better ForceAtlas2 layout, '
+                "install package 'fa2' (`pip install fa2`)."
+            )
             layout = 'fr'
     if layout == 'fa':
         np.random.seed(random_state)
@@ -216,52 +219,53 @@ def _compute_pos(adjacency_solid, layout=None, random_state=0, init_pos=None, ad
 
 
 def paga(
-        adata,
-        threshold=None,
-        color=None,
-        layout=None,
-        layout_kwds={},
-        init_pos=None,
-        root=0,
-        labels=None,
-        single_component=False,
-        solid_edges='connectivities',
-        dashed_edges=None,
-        transitions=None,
-        fontsize=None,
-        fontweight='bold',
-        text_kwds={},
-        node_size_scale=1,
-        node_size_power=0.5,
-        edge_width_scale=1,
-        min_edge_width=None,
-        max_edge_width=None,
-        arrowsize=30,
-        title=None,
-        left_margin=0.01,
-        random_state=0,
-        pos=None,
-        normalize_to_color=False,
-        cmap=None,
-        cax=None,
-        colorbar=None,
-        cb_kwds={},
-        frameon=None,
-        add_pos=True,
-        export_to_gexf=False,
-        use_raw=True,
-        colors=None,   # backwards compat
-        groups=None,  # backwards compat
-        plot=True,
-        show=None,
-        save=None,
-        ax=None):
+    adata,
+    threshold=None,
+    color=None,
+    layout=None,
+    layout_kwds={},
+    init_pos=None,
+    root=0,
+    labels=None,
+    single_component=False,
+    solid_edges='connectivities',
+    dashed_edges=None,
+    transitions=None,
+    fontsize=None,
+    fontweight='bold',
+    text_kwds={},
+    node_size_scale=1,
+    node_size_power=0.5,
+    edge_width_scale=1,
+    min_edge_width=None,
+    max_edge_width=None,
+    arrowsize=30,
+    title=None,
+    left_margin=0.01,
+    random_state=0,
+    pos=None,
+    normalize_to_color=False,
+    cmap=None,
+    cax=None,
+    colorbar=None,
+    cb_kwds={},
+    frameon=None,
+    add_pos=True,
+    export_to_gexf=False,
+    use_raw=True,
+    colors=None,   # backwards compat
+    groups=None,  # backwards compat
+    plot=True,
+    show=None,
+    save=None,
+    ax=None,
+) -> Union[Axes, List[Axes], None]:
     """Plot the PAGA graph through thresholding low-connectivity edges.
 
     Compute a coarse-grained layout of the data. Reuse this by passing
     `init_pos='paga'` to :func:`~scanpy.api.tl.umap` or
     :func:`~scanpy.api.tl.draw_graph` and obtain embeddings with more meaningful
-    global topology [Wolf17i]_.
+    global topology [Wolf19]_.
 
     This uses ForceAtlas2 or igraph's layout algorithms for most layouts [Csardi06]_.
 
@@ -341,7 +345,7 @@ def paga(
         grouping.
     cmap : color map
         The color map.
-    cax : `matplotlib.Axes`
+    cax : :class:`~matplotlib.axes.Axes`
         A matplotlib axes object for a potential colorbar.
     cb_kwds : colorbar keywords
         See `here
@@ -360,20 +364,21 @@ def paga(
     save : `bool` or `str`, optional (default: `None`)
         If `True` or a `str`, save the figure. A string is appended to the
         default filename. Infer the filetype if ending on \\{'.pdf', '.png', '.svg'\\}.
-    ax : `matplotlib.Axes`
+    ax : :class:`~matplotlib.axes.Axes`
         A matplotlib axes object.
 
     Returns
     -------
-    `None`, `axs`
-        If `show==False`, one or more `matplotlib.Axis` objects.
-        Adds `'pos'` to `adata.uns['paga']` if `add_pos` is `True`.
+    If `show==False`, one or more :class:`~matplotlib.axes.Axes` objects.
+    Adds `'pos'` to `adata.uns['paga']` if `add_pos` is `True`.
 
     Notes
     -----
     When initializing the positions, note that - for some reason - igraph
     mirrors coordinates along the x axis... that is, you should increase the
     `maxiter` parameter by 1 if the layout is flipped.
+
+    .. currentmodule:: scanpy
 
     See also
     --------
@@ -383,7 +388,7 @@ def paga(
     """
     if groups is not None:  # backwards compat
         labels = groups
-        logg.warn('`groups` is deprecated in `pl.paga`: use `labels` instead')
+        logg.warning('`groups` is deprecated in `pl.paga`: use `labels` instead')
     if colors is None:
         colors = color
     # colors is a list that contains no lists
@@ -454,7 +459,7 @@ def paga(
 
         if len(colors) == 1 and not isinstance(axs, list):
             axs = [axs]
-        
+
         for icolor, c in enumerate(colors):
             if title[icolor] is not None:
                 axs[icolor].set_title(title[icolor])
@@ -502,7 +507,7 @@ def paga(
                                  cax=ax_cb)
     if add_pos:
         adata.uns['paga']['pos'] = pos
-        logg.hint('added \'pos\', the PAGA positions (adata.uns[\'paga\'])')
+        logg.hint("added 'pos', the PAGA positions (adata.uns['paga'])")
     if plot:
         utils.savefig_or_show('paga', show=show, save=save)
         if len(colors) == 1 and isinstance(axs, list): axs = axs[0]
@@ -541,6 +546,8 @@ def _paga_graph(
         cb_kwds={},
         single_component=False,
         arrowsize=30):
+    import networkx as nx
+
     node_labels = labels  # rename for clarity
     if (node_labels is not None
         and isinstance(node_labels, str)
@@ -642,9 +649,10 @@ def _paga_graph(
     # count number of connected components
     n_components, labels = scipy.sparse.csgraph.connected_components(adjacency_solid)
     if n_components > 1 and not single_component:
-        logg.msg(
+        logg.debug(
             'Graph has more than a single connected component. '
-            'To restrict to this component, pass `single_component=True`.')
+            'To restrict to this component, pass `single_component=True`.'
+        )
     if n_components > 1 and single_component:
         component_sizes = np.bincount(labels)
         largest_component = np.where(
@@ -653,10 +661,11 @@ def _paga_graph(
         adjacency_solid = adjacency_solid.tocsc()[:, labels == largest_component]
         colors = np.array(colors)[labels == largest_component]
         node_labels = np.array(node_labels)[labels == largest_component]
+        cats_dropped = adata.obs[groups_key].cat.categories[labels != largest_component].tolist()
         logg.info(
             'Restricting graph to largest connected component by dropping categories\n'
-            '{}'.format(
-                adata.obs[groups_key].cat.categories[labels != largest_component].tolist()))
+            f'{cats_dropped}'
+        )
         nx_g_solid = nx.Graph(adjacency_solid)
         if dashed_edges is not None:
             raise ValueError('`single_component` only if `dashed_edges` is `None`.')
@@ -706,18 +715,17 @@ def _paga_graph(
                 'position': {'x': 1000*pos[count][0],
                              'y': 1000*pos[count][1],
                              'z': 0}}
-        filename = settings.writedir + 'paga_graph.gexf'
-        logg.msg('exporting to {}'.format(filename), v=1)
-        if settings.writedir != '' and not os.path.exists(settings.writedir):
-            os.makedirs(settings.writedir)
-        nx.write_gexf(nx_g_solid, settings.writedir + 'paga_graph.gexf')
+        filename = settings.writedir / 'paga_graph.gexf'
+        logg.warning(f'exporting to {filename}')
+        settings.writedir.mkdir(parents=True, exist_ok=True)
+        nx.write_gexf(nx_g_solid, settings.writedir / 'paga_graph.gexf')
 
     ax.set_frame_on(frameon)
     ax.set_xticks([])
     ax.set_yticks([])
 
     # groups sizes
-    if (groups_key is not None and groups_key + '_sizes' in adata.uns):
+    if groups_key is not None and groups_key + '_sizes' in adata.uns:
         groups_sizes = adata.uns[groups_key + '_sizes']
     else:
         groups_sizes = np.ones(len(node_labels))
@@ -791,32 +799,33 @@ def _paga_graph(
 
 
 def paga_path(
-        adata,
-        nodes,
-        keys,
-        use_raw=True,
-        annotations=['dpt_pseudotime'],
-        color_map=None,
-        color_maps_annotations={'dpt_pseudotime': 'Greys'},
-        palette_groups=None,
-        n_avg=1,
-        groups_key=None,
-        xlim=[None, None],
-        title=None,
-        left_margin=None,
-        ytick_fontsize=None,
-        title_fontsize=None,
-        show_node_names=True,
-        show_yticks=True,
-        show_colorbar=True,
-        legend_fontsize=None,
-        legend_fontweight=None,
-        normalize_to_zero_one=False,
-        as_heatmap=True,
-        return_data=False,
-        show=None,
-        save=None,
-        ax=None):
+    adata,
+    nodes,
+    keys,
+    use_raw=True,
+    annotations=['dpt_pseudotime'],
+    color_map=None,
+    color_maps_annotations={'dpt_pseudotime': 'Greys'},
+    palette_groups=None,
+    n_avg=1,
+    groups_key=None,
+    xlim=[None, None],
+    title=None,
+    left_margin=None,
+    ytick_fontsize=None,
+    title_fontsize=None,
+    show_node_names=True,
+    show_yticks=True,
+    show_colorbar=True,
+    legend_fontsize=None,
+    legend_fontweight=None,
+    normalize_to_zero_one=False,
+    as_heatmap=True,
+    return_data=False,
+    show=None,
+    save=None,
+    ax=None,
+) -> Optional[Axes]:
     """Gene expression and annotation changes along paths in the abstracted graph.
 
     Parameters
@@ -865,13 +874,13 @@ def paga_path(
     save : `bool` or `str`, optional (default: `None`)
         If `True` or a `str`, save the figure. A string is appended to the
         default filename. Infer the filetype if ending on \\{'.pdf', '.png', '.svg'\\}.
-    ax : `matplotlib.Axes`
+    ax : :class:`~matplotlib.axes.Axes`
          A matplotlib axes object.
 
     Returns
     -------
-    A `matplotlib.Axes`, if `ax` is `None`, else `None`. If `return_data`,
-    return the timeseries data in addition to an axes.
+    A :class:`~matplotlib.axes.Axes` object, if `ax` is `None`, else `None`.
+    If `return_data`, return the timeseries data in addition to an axes.
     """
     ax_was_none = ax is None
 

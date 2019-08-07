@@ -1,5 +1,5 @@
 from collections import abc
-from typing import Union, Optional, Sequence, Any, Mapping
+from typing import Union, Optional, Sequence, Any, Mapping, List, Tuple
 
 import numpy as np
 from anndata import AnnData
@@ -9,11 +9,12 @@ from matplotlib.figure import Figure
 from pandas.api.types import is_categorical_dtype
 from matplotlib import pyplot as pl
 from matplotlib import rcParams
+from matplotlib import patheffects
 from matplotlib.colors import is_color_like, Colormap
 
 from .. import _utils as utils
 from .._docs import doc_adata_color_etc, doc_edges_arrows, doc_scatter_bulk, doc_show_save_ax
-from ... import settings
+from ..._settings import settings
 from ...utils import sanitize_anndata, doc_params
 from ... import logging as logg
 
@@ -33,6 +34,7 @@ def plot_scatter(
     arrows_kwds: Optional[Mapping[str, Any]] = None,
     groups: Optional[str] = None,
     components: Union[str, Sequence[str]] = None,
+    layer: Optional[str] = None,
     projection: str = '2d',
     color_map: Union[Colormap, str, None] = None,
     palette: Union[str, Sequence[str], Cycler, None] = None,
@@ -41,6 +43,7 @@ def plot_scatter(
     legend_fontsize: Optional[int] = None,
     legend_fontweight: str = 'bold',
     legend_loc: str = 'right margin',
+    legend_fontoutline: Optional[int] = None,
     ncols: int = 4,
     hspace: float = 0.25,
     wspace: Optional[float] = None,
@@ -68,18 +71,21 @@ def plot_scatter(
     else:
         args_3d = {}
 
+    # Deal with Raw
     if use_raw is None:
         # check if adata.raw is set
-        if adata.raw is None:
-            use_raw = False
-        else:
-            use_raw = True
+        use_raw = layer is None and adata.raw is not None
+    if use_raw and layer is not None:
+        raise ValueError(
+            "Cannot use both a layer and the raw representation. Was passed:"
+            f"use_raw={use_raw}, layer={layer}."
+        )
 
     if wspace is None:
         #  try to set a wspace that is not too large or too small given the
         #  current figure size
         wspace = 0.75 / rcParams['figure.figsize'][0] + 0.02
-    if adata.raw is None and use_raw is True:
+    if adata.raw is None and use_raw:
         raise ValueError(
             "`use_raw` is set to True but AnnData object does not have raw. "
             "Please check."
@@ -145,7 +151,7 @@ def plot_scatter(
     #                 color=gene2, components = [1, 2], color=gene2, components=[2,3]]
     for count, (value_to_plot, component_idx) in enumerate(itertools.product(color, idx_components)):
         color_vector, categorical = _get_color_values(
-            adata, value_to_plot,
+            adata, value_to_plot, layer=layer,
             groups=groups, palette=palette,
             use_raw=use_raw, gene_symbols=gene_symbols,
         )
@@ -182,8 +188,10 @@ def plot_scatter(
             try:
                 ax.set_title(title[count])
             except IndexError:
-                logg.warn("The title list is shorter than the number of panels. Using 'color' value instead for"
-                          "some plots.")
+                logg.warning(
+                    "The title list is shorter than the number of panels. "
+                    "Using 'color' value instead for some plots."
+                )
                 ax.set_title(value_to_plot)
 
         if 's' not in kwargs:
@@ -236,9 +244,14 @@ def plot_scatter(
             # there is not need to plot a legend or a colorbar
             continue
 
+        if legend_fontoutline is not None:
+            legend_fontoutline = [patheffects.withStroke(linewidth=legend_fontoutline,
+                                                         foreground='w')]
+
         _add_legend_or_colorbar(
             adata, ax, cax, categorical, value_to_plot, legend_loc,
-            _data_points, legend_fontweight, legend_fontsize, groups, multi_panel,
+            _data_points, legend_fontweight, legend_fontsize, legend_fontoutline,
+            groups, multi_panel,
         )
 
     if return_fig is True:
@@ -268,7 +281,7 @@ def _wraps_plot_scatter(wrapper):
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, edges_arrows=doc_edges_arrows, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def umap(adata, **kwargs):
+def umap(adata, **kwargs) -> Union[Axes, List[Axes], None]:
     """\
     Scatter plot in UMAP basis.
 
@@ -281,14 +294,14 @@ def umap(adata, **kwargs):
 
     Returns
     -------
-    If `show==False` a `matplotlib.Axis` or a list of it.
+    If `show==False` a :class:`~matplotlib.axes.Axes` or a list of it.
     """
     return plot_scatter(adata, 'umap', **kwargs)
 
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, edges_arrows=doc_edges_arrows, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def tsne(adata, **kwargs):
+def tsne(adata, **kwargs) -> Union[Axes, List[Axes], None]:
     """\
     Scatter plot in tSNE basis.
 
@@ -301,14 +314,14 @@ def tsne(adata, **kwargs):
 
     Returns
     -------
-    If `show==False` a `matplotlib.Axis` or a list of it.
+    If `show==False` a :class:`~matplotlib.axes.Axes` or a list of it.
     """
     return plot_scatter(adata, 'tsne', **kwargs)
 
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, edges_arrows=doc_edges_arrows, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def phate(adata, **kwargs):
+def phate(adata, **kwargs) -> Union[List[Axes], None]:
     """\
     Scatter plot in PHATE basis.
 
@@ -321,7 +334,7 @@ def phate(adata, **kwargs):
 
     Returns
     -------
-    If `show==False`, a list of `matplotlib.Axis` objects. Every second element
+    If `show==False`, a list of :class:`~matplotlib.axes.Axes` objects. Every second element
     corresponds to the 'right margin' drawing area for color bars and legends.
 
     Examples
@@ -347,7 +360,7 @@ def phate(adata, **kwargs):
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def diffmap(adata, **kwargs):
+def diffmap(adata, **kwargs) -> Union[Axes, List[Axes], None]:
     """\
     Scatter plot in Diffusion Map basis.
 
@@ -359,14 +372,14 @@ def diffmap(adata, **kwargs):
 
     Returns
     -------
-    If `show==False` a `matplotlib.Axis` or a list of it.
+    If `show==False` a :class:`~matplotlib.axes.Axes` or a list of it.
     """
     return plot_scatter(adata, 'diffmap', **kwargs)
 
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, edges_arrows=doc_edges_arrows, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def draw_graph(adata, layout=None, **kwargs):
+def draw_graph(adata, layout=None, **kwargs) -> Union[Axes, List[Axes], None]:
     """\
     Scatter plot in graph-drawing basis.
 
@@ -383,7 +396,7 @@ def draw_graph(adata, layout=None, **kwargs):
 
     Returns
     -------
-    If `show==False` a `matplotlib.Axis` or a list of it.
+    If `show==False` a :class:`~matplotlib.axes.Axes` or a list of it.
     """
     if layout is None:
         layout = str(adata.uns['draw_graph']['params']['layout'])
@@ -397,7 +410,7 @@ def draw_graph(adata, layout=None, **kwargs):
 
 @_wraps_plot_scatter
 @doc_params(adata_color_etc=doc_adata_color_etc, scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def pca(adata, **kwargs):
+def pca(adata, **kwargs) -> Union[Axes, List[Axes], None]:
     """\
     Scatter plot in PCA coordinates.
 
@@ -409,7 +422,7 @@ def pca(adata, **kwargs):
 
     Returns
     -------
-    If `show==False` a `matplotlib.Axis` or a list of it.
+    If `show==False` a :class:`~matplotlib.axes.Axes` or a list of it.
     """
     return plot_scatter(adata, 'pca', **kwargs)
 
@@ -417,7 +430,7 @@ def pca(adata, **kwargs):
 # Helpers
 
 
-def _get_data_points(adata, basis, projection, components):
+def _get_data_points(adata, basis, projection, components) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
     """
     Returns the data points corresponding to the selected basis, projection and/or components.
 
@@ -427,24 +440,29 @@ def _get_data_points(adata, basis, projection, components):
 
     Returns
     -------
-    `tuple` of:
-        data_points : `list`. Each list is a numpy array containing the data points
-        components : `list` The cleaned list of components. Eg. [[0,1]] or [[0,1], [1,2]]
-                    for components = [1,2] and components=['1,2', '2,3'] respectively
+    data_points : list
+        Each entry is a numpy array containing the data points
+    components : list
+        The cleaned list of components. Eg. [(0,1)] or [(0,1), (1,2)]
+        for components = [1,2] and components=['1,2', '2,3'] respectively
     """
     n_dims = 2
     if projection == '3d':
         # check if the data has a third dimension
         if adata.obsm['X_' + basis].shape[1] == 2:
             if settings._low_resolution_warning:
-                logg.warn('Selected projections is "3d" but only two dimensions '
-                          'are available. Only these two dimensions will be plotted')
+                logg.warning(
+                    'Selected projections is "3d" but only two dimensions '
+                    'are available. Only these two dimensions will be plotted'
+                )
         else:
             n_dims = 3
 
     if components == 'all':
-        components = ['{},{}'.format(*((i, i+1) if i % 2 == 1 else (i+1, i)))
-            for i in range(1, adata.obsm['X_{}'.format(basis)].shape[1])]
+        from itertools import combinations
+        r_value = 3 if projection == '3d' else 2
+        _components_list = np.arange(adata.obsm['X_{}'.format(basis)].shape[1]) + 1
+        components = [",".join(map(str, x)) for x in combinations(_components_list, r=r_value)]
 
     components_list = []
     offset = 0
@@ -455,19 +473,19 @@ def _get_data_points(adata, basis, projection, components):
 
         if isinstance(components, str):
             # eg: components='1,2'
-            components_list.append([int(x.strip()) - 1 + offset for x in components.split(',')])
+            components_list.append(tuple(int(x.strip()) - 1 + offset for x in components.split(',')))
 
         elif isinstance(components, abc.Sequence):
             if isinstance(components[0], int):
                 # components=[1,2]
-                components_list.append([int(x) - 1 + offset for x in components])
+                components_list.append(tuple(int(x) - 1 + offset for x in components))
             else:
                 # in this case, the components are str
                 # eg: components=['1,2'] or components=['1,2', '2,3]
                 # More than one component can be given and is stored
                 # as a new item of components_list
                 for comp in components:
-                    components_list.append([int(x.strip()) - 1 + offset for x in comp.split(',')])
+                    components_list.append(tuple(int(x.strip()) - 1 + offset for x in comp.split(',')))
 
         else:
             raise ValueError("Given components: '{}' are not valid. Please check. "
@@ -484,7 +502,7 @@ def _get_data_points(adata, basis, projection, components):
         if basis == 'diffmap':
             # remove the offset added in the case of diffmap, such that
             # plot_scatter can print the labels correctly.
-            components_list = [[number-1 for number in comp] for comp in components_list]
+            components_list = [tuple(number-1 for number in comp) for comp in components_list]
     else:
         data_points = [adata.obsm['X_' + basis][:, offset:offset+n_dims]]
         components_list = []
@@ -493,7 +511,7 @@ def _get_data_points(adata, basis, projection, components):
 
 def _add_legend_or_colorbar(adata, ax, cax, categorical, value_to_plot, legend_loc,
                             scatter_array, legend_fontweight, legend_fontsize,
-                            groups, multi_panel):
+                            legend_fontoutline, groups, multi_panel):
     """
     Adds a color bar or a legend to the given ax. A legend is added when the
     data is categorical and a color bar is added when a continuous value was used.
@@ -539,7 +557,8 @@ def _add_legend_or_colorbar(adata, ax, cax, categorical, value_to_plot, legend_l
                         weight=legend_fontweight,
                         verticalalignment='center',
                         horizontalalignment='center',
-                        fontsize=legend_fontsize)
+                        fontsize=legend_fontsize,
+                        path_effects=legend_fontoutline)
 
                 all_pos[ilabel] = [x_pos, y_pos]
             # this is temporary storage for access by other tools
@@ -555,11 +574,14 @@ def _set_colors_for_categorical_obs(adata, value_to_plot, palette):
 
     Parameters
     ----------
-    adata : annData object
-    value_to_plot : name of a valid categorical observation
-    palette : Palette should be either a valid `matplotlib.pyplot.colormaps()` string,
-              a list of colors (in a format that can be understood by matplotlib,
-              eg. RGB, RGBS, hex, or a cycler object with key='color'
+    adata
+        annData object
+    value_to_plot
+        name of a valid categorical observation
+    palette
+        Palette should be either a valid :func:`~matplotlib.pyplot.colormaps` string,
+        a list of colors (in a format that can be understood by matplotlib,
+        eg. RGB, RGBS, hex, or a cycler object with key='color'
 
     Returns
     -------
@@ -580,10 +602,12 @@ def _set_colors_for_categorical_obs(adata, value_to_plot, palette):
         # it doesnt matter if the list is shorter than the categories length:
         if isinstance(palette, abc.Sequence):
             if len(palette) < len(categories):
-                logg.warn("Length of palette colors is smaller than the number of "
-                          "categories (palette length: {}, categories length: {}. "
-                          "Some categories will have the same color."
-                          .format(len(palette), len(categories)))
+                logg.warning(
+                    "Length of palette colors is smaller than the number of "
+                    f"categories (palette length: {len(palette)}, "
+                    f"categories length: {len(categories)}. "
+                    "Some categories will have the same color."
+                )
             # check that colors are valid
             _color_list = []
             for color in palette:
@@ -634,102 +658,91 @@ def _set_default_colors_for_categorical_obs(adata, value_to_plot):
         palette = [next(cc)['color'] for _ in range(length)]
 
     else:
-        if length <= 28:
+        if length <= 20:
+            palette = palettes.default_20
+        elif length <= 26:
             palette = palettes.default_26
         elif length <= len(palettes.default_64):  # 103 colors
             palette = palettes.default_64
         else:
-            palette = ['grey' for i in range(length)]
-            logg.info('the obs value: "{}" has more than 103 categories. Uniform '
-                      '\'grey\' color will be used for all categories.')
+            palette = ['grey' for _ in range(length)]
+            logg.info(
+                f'the obs value {value_to_plot!r} has more than 103 categories. Uniform '
+                "'grey' color will be used for all categories."
+            )
 
     adata.uns[value_to_plot + '_colors'] = palette[:length]
 
 
-def _get_color_values(adata, value_to_plot, groups=None, palette=None, use_raw=False, gene_symbols=None):
+def _get_color_values(adata, value_to_plot, groups=None, palette=None, use_raw=False,
+                      gene_symbols=None, layer=None) -> Tuple[Union[np.ndarray, str], bool]:
     """
     Returns the value or color associated to each data point.
     For categorical data, the return value is list of colors taken
     from the category palette or from the given `palette` value.
 
     For non-categorical data, the values are returned
+
+    Returns
+    -------
+    Tuple of values to plot, and boolean indicating whether they are categorical.
     """
+    if value_to_plot is None:
+        return "lightgray", False
+    if (gene_symbols is not None
+        and value_to_plot not in adata.obs.columns
+        and value_to_plot not in adata.var_names):
+        # We should probably just make an index for this, and share it over runs
+        value_to_plot = adata.var.index[adata.var[gene_symbols] == value_to_plot][0] # TODO: Throw helpful error if this doesn't work
+    if use_raw and value_to_plot not in adata.obs.columns:
+        values = adata.raw.obs_vector(value_to_plot)
+    else:
+        values = adata.obs_vector(value_to_plot, layer=layer)
 
     ###
     # when plotting, the color of the dots is determined for each plot
     # the data is either categorical or continuous and the data could be in
     # 'obs' or in 'var'
-    categorical = False
-    if value_to_plot is None:
-        color_vector = 'lightgray'
-    # check if value to plot is in obs
-    elif value_to_plot in adata.obs.columns:
-        if is_categorical_dtype(adata.obs[value_to_plot]):
-            categorical = True
-
-            if palette:
-                # use category colors base on given palette
-                _set_colors_for_categorical_obs(adata, value_to_plot, palette)
-            else:
-                if value_to_plot + '_colors' not in adata.uns or \
-                    len(adata.uns[value_to_plot + '_colors']) < len(adata.obs[value_to_plot].cat.categories):
-                    #  set a default palette in case that no colors or few colors are found
-                    _set_default_colors_for_categorical_obs(adata, value_to_plot)
-                else:
-                    # check that the colors in 'uns' are valid
-                    _palette = []
-                    for color in adata.uns[value_to_plot + '_colors']:
-                        if not is_color_like(color):
-                            # check if the color is a valid R color and translate it
-                            # to a valid hex color value
-                            if color in utils.additional_colors:
-                                color = utils.additional_colors[color]
-                            else:
-                                logg.warn("The following color value found in adata.uns['{}'] "
-                                          " is not valid: '{}'. Default colors are used.".format(value_to_plot + '_colors', color))
-                                _set_default_colors_for_categorical_obs(adata, value_to_plot)
-                                _palette = None
-                                break
-                        _palette.append(color)
-                    if _palette is not None:
-                        adata.uns[value_to_plot + '_colors'] = _palette
-            # for categorical data, colors should be
-            # stored in adata.uns[value_to_plot + '_colors']
-            # Obtain color vector by converting every category
-            # into its respective color
-
-            color_vector = [adata.uns[value_to_plot + '_colors'][x] for x in adata.obs[value_to_plot].cat.codes]
-            if groups is not None:
-                if isinstance(groups, str):
-                    groups = [groups]
-                color_vector = np.array(color_vector, dtype='<U15')
-                # set color to 'light gray' for all values
-                # that are not in the groups
-                color_vector[~adata.obs[value_to_plot].isin(groups)] = "lightgray"
+    if not is_categorical_dtype(values):
+        return values, False
+    else:  # is_categorical_dtype(values)
+        color_key = f"{value_to_plot}_colors"
+        if palette:
+            _set_colors_for_categorical_obs(adata, value_to_plot, palette)
+        elif color_key not in adata.uns or \
+            len(adata.uns[color_key]) < len(values.categories):
+            #  set a default palette in case that no colors or few colors are found
+            _set_default_colors_for_categorical_obs(adata, value_to_plot)
         else:
-            color_vector = adata.obs[value_to_plot].values
-    elif gene_symbols in adata.var.columns:
-        if value_to_plot not in adata.var[gene_symbols].values:
-            logg.error("Gene symbol {!r} not found in given gene_symbols "
-                       "column: {!r}".format(value_to_plot, gene_symbols))
-            return
-        gene_id = adata.var[adata.var[gene_symbols] == value_to_plot].index[0]
-        if use_raw:
-            color_vector = adata.raw[:, gene_id].X
-        else:
-            color_vector = adata[:, gene_id].X
-    # check if value to plot is in var
-    elif use_raw is False and value_to_plot in adata.var_names:
-        color_vector = adata[:, value_to_plot].X
+            _palette = []
+            for color in adata.uns[color_key]:
+                if not is_color_like(color):
+                    # check if the color is a valid R color and translate it
+                    # to a valid hex color value
+                    if color in utils.additional_colors:
+                        color = utils.additional_colors[color]
+                    else:
+                        logg.warning(
+                            f"The following color value found in adata.uns['{value_to_plot}_colors'] "
+                            f"is not valid: '{color}'. Default colors are used."
+                        )
+                        _set_default_colors_for_categorical_obs(adata, value_to_plot)
+                        _palette = None
+                        break
+                _palette.append(color)
+            if _palette is not None:
+                adata.uns[color_key] = _palette
+        color_vector = np.asarray(adata.uns[color_key])[values.codes]
 
-    elif use_raw is True and value_to_plot in adata.raw.var_names:
-        color_vector = adata.raw[:, value_to_plot].X
-    else:
-        raise ValueError("The passed `color` {} is not a valid observation annotation "
-                         "or variable name. Valid observation annotation keys are: {}"
-                         .format(value_to_plot, adata.obs.columns))
-
-    return color_vector, categorical
+        # Handle groups
+        if groups is not None:
+            if isinstance(groups, str):
+                groups = [groups]
+            color_vector = np.array(color_vector, dtype='<U15')
+            # set color to 'light gray' for all values
+            # that are not in the groups
+            color_vector[~adata.obs[value_to_plot].isin(groups)] = "lightgray"
+        return color_vector, True
 
 
 def _basis2name(basis):

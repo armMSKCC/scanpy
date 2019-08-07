@@ -1,3 +1,11 @@
+import warnings
+warnings.warn(
+    "\n\n"
+    "In a future version of Scanpy, `scanpy.api` will be removed.\n"
+    "Simply use `import scanpy as sc` and `import scanpy.external as sce` instead.\n",
+    FutureWarning
+)
+
 from anndata import AnnData
 from ..neighbors import Neighbors
 
@@ -23,9 +31,10 @@ from .. import plotting
 # to show in the docs for that reason...
 # it would be nice to make the simple data types "properties of the
 # module"... putting setters and getters for all of them wouldn't be very nice
-from .. import settings
+from .._settings import settings
 # for now - or maybe as the permanently favored solution - put the single function here
-from ..settings import set_figure_params
+# from ..settings import set_figure_params
+set_figure_params = settings.set_figure_params
 
 # some stuff that is not actually documented...
 from .. import utils
@@ -145,7 +154,6 @@ Clustering and trajectory inference
    tl.louvain
    tl.dpt
    tl.paga
-   tl.dendrogram
 
 Marker genes
 ~~~~~~~~~~~~
@@ -154,7 +162,6 @@ Marker genes
    :toctree: .
 
    tl.rank_genes_groups
-   tl.filter_rank_genes_groups
 
 Gene scores, Cell cycle
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -187,8 +194,7 @@ find a plotting function with the same name.
 Reading
 -------
 
-*Note:* For reading annotation use
-:ref:`pandas.read_… <pandas:/io.rst#io-tools-text-csv-hdf5>` and add
+*Note:* For reading annotation use :ref:`pandas.read_… <pandas:io>` and add
 it to your `AnnData` object. The following read functions are intended for
 the numeric data in the data matrix `X`.
 
@@ -268,8 +274,9 @@ you'd usually want to set :class:`settings.autoshow` to ``False``.
 The default directories for saving figures and caching files.
 
 ==============================================  ===================================
-:class:`settings.figdir`                        Directory for saving figures (default: ``'./figures/'``).
-:class:`settings.cachedir`                      Directory for cache files (default: ``'./cache/'``).
+:class:`settings.figdir`                        Directory for saving figures (default: `Path('figures')`).
+:class:`settings.cachedir`                      Directory for cache files (default: `Path('cache')`).
+:class:`settings.datasetdir`                    Directory for example datasets (default: `Path('data')`).
 ==============================================  ===================================
 
 The verbosity of logging output, where verbosity levels have the following

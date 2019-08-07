@@ -39,6 +39,7 @@ Generic
    pl.scatter
    pl.heatmap
    pl.dotplot
+   pl.tracksplot
    pl.violin
    pl.stacked_violin
    pl.matrixplot
@@ -66,7 +67,8 @@ Methods that extract and visualize tool-specific annotation in an
 :class:`~anndata.AnnData` object.  For any method in module ``tl``, there is
 a method with the same name in ``pl``.
 
-**PCA**
+PCA
+~~~
 
 .. autosummary::
    :toctree: .
@@ -76,7 +78,8 @@ a method with the same name in ``pl``.
    pl.pca_variance_ratio
    pl.pca_overview
 
-**Embeddings**
+Embeddings
+~~~~~~~~~~
 
 .. autosummary::
    :toctree: .
@@ -85,8 +88,10 @@ a method with the same name in ``pl``.
    pl.umap
    pl.diffmap
    pl.draw_graph
+   pl.embedding_density
 
-**Branching trajectories and pseudotime, clustering**
+Branching trajectories and pseudotime, clustering
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Visualize clusters using one of the embedding methods passing ``color='louvain'``.
 
@@ -99,7 +104,8 @@ Visualize clusters using one of the embedding methods passing ``color='louvain'`
    pl.paga_path
    pl.paga_compare
 
-**Marker genes**
+Marker genes
+~~~~~~~~~~~~
 
 .. autosummary::
    :toctree: .
@@ -111,17 +117,11 @@ Visualize clusters using one of the embedding methods passing ``color='louvain'`
    pl.rank_genes_groups_dotplot
    pl.rank_genes_groups_matrixplot
 
-
-**Simulations**
+Simulations
+~~~~~~~~~~~
 
 .. autosummary::
    :toctree: .
 
    pl.sim
-
-**Density Plotting**
-.. autosummary::
-   :toctree: .
-
-   pl.embedding_density
 """

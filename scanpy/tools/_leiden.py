@@ -1,4 +1,4 @@
-from typing import Optional, Type
+from typing import Optional, Tuple, Sequence, Type
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,8 @@ from scipy import sparse
 
 from .. import utils
 from .. import logging as logg
-from ..logging import _settings_verbosity_greater_or_equal_than
+
+from ._utils_clustering import rename_groups, restrict_adjacency
 
 try:
     from leidenalg.VertexPartition import MutableVertexPartition
@@ -21,8 +22,9 @@ def leiden(
     adata: AnnData,
     resolution: float = 1,
     *,
+    restrict_to: Optional[Tuple[str, Sequence[str]]] = None,
     random_state: int = 0,
-    key_added: str = 'leiden',
+    key_added: Optional[str] = 'leiden',
     adjacency: Optional[sparse.spmatrix] = None,
     directed: bool = True,
     use_weights: bool = True,
@@ -30,9 +32,8 @@ def leiden(
     partition_type: Optional[Type[MutableVertexPartition]] = None,
     copy: bool = False,
     **partition_kwargs
-) -> Optional[AnnData]:
-    """
-    Cluster cells into subgroups [Traag18]_.
+):
+    """Cluster cells into subgroups [Traag18]_.
 
     Cluster cells using the Leiden algorithm [Traag18]_, an improved version of the
     Louvain algorithm [Blondel08]_. The Louvain algorithm has been proposed for single-cell
@@ -46,19 +47,22 @@ def leiden(
         The annotated data matrix.
     resolution
         A parameter value controlling the coarseness of the clustering.
-        Higher values lead to more clusters. Set to ``None`` if overriding ``partition_type``
-        to one that doesn’t accept a ``resolution_parameter``.
+        Higher values lead to more clusters. Set to `None` if overriding `partition_type`
+        to one that doesn’t accept a `resolution_parameter`.
     random_state
         Change the initialization of the optimization.
+    restrict_to
+        Restrict the clustering to the categories within the key for sample
+        annotation, tuple needs to contain `(obs_key, list_of_categories)`.
     key_added
-        ``adata.obs`` key under which to add the cluster labels.
+        `adata.obs` key under which to add the cluster labels. (default: `'leiden'`)
     adjacency
         Sparse adjacency matrix of the graph, defaults to
-        ``adata.uns['neighbors']['connectivities']``.
+        `adata.uns['neighbors']['connectivities']`.
     directed
         Whether to treat the graph as directed or undirected.
     use_weights
-        If ``True``, edge weights from the graph are used in the computation
+        If `True`, edge weights from the graph are used in the computation
         (placing more emphasis on stronger edges).
     n_iterations
         How many iterations of the Leiden clustering algorithm to perform.
@@ -68,39 +72,38 @@ def leiden(
         Type of partition to use. Defaults to :class:`~leidenalg.RBConfigurationVertexPartition`.
         For the available options, consult the documentation for :func:`~leidenalg.find_partition`.
     copy
-        Whether to copy ``adata`` or modify it inplace.
+        Whether to copy `adata` or modify it inplace.
     **partition_kwargs
         Any further arguments to pass to `~leidenalg.find_partition`
-        (which in turn passes arguments to the ``partition_type``).
+        (which in turn passes arguments to the `partition_type`).
 
     Returns
     -------
-    :obj:`None`
-        By default (``copy=False``), updates ``adata`` with the following fields:
-
-        ``adata.obs[key_added]`` (:class:`pandas.Series`, dtype ``category``)
-            Array of dim (number of samples) that stores the subgroup id
-            (``'0'``, ``'1'``, ...) for each cell.
-
-        ``adata.uns['leiden']['params']``
-            A dict with the values for the parameters ``resolution``,
-            ``random_state``, and ``n_iterations``.
-
-    :class:`~anndata.AnnData`
-        When ``copy=True`` is set, a copy of ``adata`` with those fields is returned.
+    `adata.obs[key_added]`
+        Array of dim (number of samples) that stores the subgroup id (`'0'`, `'1'`, ...) for each cell.
+    `adata.uns['leiden']['params']`
+        A dict with the values for the parameters `resolution`, `random_state`, and `n_iterations`.
     """
     try:
         import leidenalg
     except ImportError:
         raise ImportError('Please install the leiden algorithm: `pip3 install leidenalg`.')
 
-    logg.info('running Leiden clustering', r=True)
+    start = logg.info('running Leiden clustering')
     adata = adata.copy() if copy else adata
     # are we clustering a user-provided graph or the default AnnData one?
     if adjacency is None:
         if 'neighbors' not in adata.uns:
             raise ValueError('You need to run `pp.neighbors` first to compute a neighborhood graph.')
         adjacency = adata.uns['neighbors']['connectivities']
+    if restrict_to is not None:
+        restrict_key, restrict_categories = restrict_to
+        adjacency, restrict_indices = restrict_adjacency(
+            adata,
+            restrict_key,
+            restrict_categories,
+            adjacency
+        )
     # convert it to igraph
     g = utils.get_igraph_from_adjacency(adjacency, directed=directed)
     # flip to the default partition type if not overriden by the user
@@ -121,6 +124,17 @@ def leiden(
     part = leidenalg.find_partition(g, partition_type, **partition_kwargs)
     # store output into adata.obs
     groups = np.array(part.membership)
+    if restrict_to is not None:
+        if key_added == 'louvain':
+            key_added += '_R'
+        groups = rename_groups(
+            adata,
+            key_added,
+            restrict_key,
+            restrict_categories,
+            restrict_indices,
+            groups
+        )
     adata.obs[key_added] = pd.Categorical(
         values=groups.astype('U'),
         categories=natsorted(np.unique(groups).astype('U')),
@@ -132,8 +146,12 @@ def leiden(
         random_state=random_state,
         n_iterations=n_iterations,
     )
-    logg.info('    finished', time=True, end=' ' if _settings_verbosity_greater_or_equal_than(3) else '\n')
-    logg.hint('found {} clusters and added\n'
-              '    \'{}\', the cluster labels (adata.obs, categorical)'
-              .format(len(np.unique(groups)), key_added))
+    logg.info(
+        '    finished',
+        time=start,
+        deep=(
+            f'found {len(np.unique(groups))} clusters and added\n'
+            f'    {key_added!r}, the cluster labels (adata.obs, categorical)'
+        ),
+    )
     return adata if copy else None

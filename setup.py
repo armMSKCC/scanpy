@@ -1,6 +1,6 @@
 import sys
 if sys.version_info < (3,):
-    sys.exit('scanpy requires Python >= 3.5')
+    sys.exit('scanpy requires Python >= 3.6')
 from pathlib import Path
 
 from setuptools import setup, find_packages
@@ -22,7 +22,7 @@ setup(
     author=__author__,
     author_email=__email__,
     license='BSD',
-    python_requires='>=3.5',
+    python_requires='>=3.6',
     install_requires=[
         l.strip() for l in
         Path('requirements.txt').read_text('utf-8').splitlines()
@@ -32,7 +32,7 @@ setup(
         leiden=['python-igraph', 'leidenalg'],
         bbknn=['bbknn'],
         doc=['sphinx', 'sphinx_rtd_theme', 'sphinx_autodoc_typehints', 'scanpydoc'],
-        test=['pytest>=3.9', 'dask[array]', 'zappy', 'zarr'],
+        test=['pytest>=4.4', 'dask[array]', 'fsspec', 'zappy', 'zarr'],
     ),
     packages=find_packages(),
     # `package_data` does NOT work for source distributions!!!
@@ -40,6 +40,9 @@ setup(
     # https://stackoverflow.com/questions/7522250/how-to-include-package-data-with-setuptools-distribute
     package_data={'': '*.txt'},
     include_package_data=True,
+    entry_points=dict(
+        console_scripts=['scanpy=scanpy.cli:console_main'],
+    ),
     zip_safe=False,
     classifiers=[
         'Development Status :: 5 - Production/Stable',

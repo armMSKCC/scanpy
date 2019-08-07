@@ -1,104 +1,65 @@
-doc_norm_descr = """\
-Normalize total counts per cell.
-
-Normalize each cell by total counts over genes, so that every cell has
-the same total count after normalization.
-
-Similar functions are used, for example, by Seurat [Satija15]_, Cell Ranger
-[Zheng17]_ or SPRING [Weinreb17]_.\
+"""Shared docstrings for preprocessing function parameters.
 """
 
-doc_quant_descr = """\
-Normalize counts per cell.
-
-Normalize each cell by sum of counts over genes
-that make up less than fraction (specified by *quantile*) of the total count
-in every cell. These genes in each cell will sum up to *target_sum*.
-
-Similar functions are used, for example, by Seurat [Satija15]_, Cell Ranger
-[Zheng17]_ or SPRING [Weinreb17]_.\
+doc_expr_reps = """\
+layer
+    If provided, use ``adata.layers[layer]`` for expression values instead
+    of `adata.X`.
+use_raw
+    If True, use `adata.raw.X` for expression values instead of `adata.X`.\
 """
 
-doc_params_bulk = """\
-Parameters
-----------
-adata : :class:`~anndata.AnnData`
-    The annotated data matrix of shape `n_obs` × `n_vars`. Rows correspond
-    to cells and columns to genes.
-target_sum : `float` or `None`, optional (default: `None`)
-    If `None`, after normalization, each observation (cell) has a total count
-    equal to the median of total counts for observations (cells)
-    before normalization.
-key_added : `str`, optional (default: `None`)
-    Name of the field in `adata.obs` where the total counts per cell are
-    stored.
-layers : `str` or list of `str`, optional (default: `None`)
-    List of layers to normalize. Set to `'all'` to normalize all layers.
-layer_norm : `str` or `None`, optional (default: `None`)
-    Specifies how to normalize layers:
-
-    * If `None`, after normalization, for each layer in *layers* each cell
-    has a total count equal to the median of the *counts_per_cell* before
-    normalization of the layer.
-    * If `'after'`, for each layer in *layers* each cell has
-    a total count equal to target_sum.
-    * If `'X'`, for each layer in *layers* each cell has a total count equal
-    to the median of total counts for observations (cells) of `adata.X`
-    before normalization.
-inplace : `bool`, optional (default: `True`)
-    Whether to update `adata` or return dictionary with normalized copies of
-    `adata.X` and `adata.layers`.\
+doc_obs_qc_args = """\
+qc_vars
+    Keys for boolean columns of `.var` which identify variables you could 
+    want to control for (e.g. "ERCC" or "mito").
+percent_top
+    Which proportions of top genes to cover. If empty or `None` don't
+    calculate. Values are considered 1-indexed, `percent_top=[50]` finds
+    cumulative proportion to the 50th most expressed gene.\
 """
 
-doc_norm_quant = """\
-quantile : `float`, optional (default: 1)
-    Only use genes that make up less than fraction (specified by *quantile*)
-    of the total count in every cell. So only these genes will sum up
-    to *target_sum*.\
+doc_qc_metric_naming = """\
+expr_type
+    Name of kind of values in X.
+var_type
+    The kind of thing the variables are.\
 """
 
-doc_norm_return = """\
-Returns
--------
-Returns dictionary with normalized copies of `adata.X` and `adata.layers`
-or updates `adata` with normalized version of the original
-`adata.X` and `adata.layers`, depending on `inplace`.\
+doc_obs_qc_returns = """\
+Observation level metrics include:
+
+`total_{var_type}_by_{expr_type}`
+    E.g. "total_genes_by_counts". Number of genes with positive counts in a cell.
+`total_{expr_type}`
+    E.g. "total_counts". Total number of counts for a cell.
+`pct_{expr_type}_in_top_{n}_{var_type}` - for `n` in `percent_top`
+    E.g. "pct_counts_in_top_50_genes". Cumulative percentage of counts
+    for 50 most expressed genes in a cell.
+`total_{expr_type}_{qc_var}` - for `qc_var` in `qc_vars`
+    E.g. "total_counts_mito". Total number of counts for variabes in
+    `qc_vars`.
+`pct_{expr_type}_{qc_var}` - for `qc_var` in `qc_vars`
+    E.g. "pct_counts_mito". Proportion of total counts for a cell which
+    are mitochondrial.\
 """
 
-doc_ex_quant = """\
-Examples
---------
->>> adata = AnnData(np.array([[1, 0, 1], [3, 0, 1], [5, 6, 1]]))
->>> sc.pp.normalize_quantile(adata, quantile=0.7)
->>> print(adata.X)
-[[1.         0.         1.        ]
- [3.         0.         1.        ]
- [0.71428573 0.85714287 0.14285715]]
+doc_var_qc_returns = """\
+Variable level metrics include:
 
-Genes 1 and 2 were normalized and now sum up to 1 in each cell.\
+`total_{expr_type}`
+    E.g. "total_counts". Sum of counts for a gene.
+`mean_{expr_type}`
+    E.g. "mean counts". Mean expression over all cells.
+`n_cells_by_{expr_type}`
+    E.g. "n_cells_by_counts". Number of cells this expression is
+    measured in.
+`pct_dropout_by_{expr_type}`
+    E.g. "pct_dropout_by_counts". Percentage of cells this feature does
+    not appear in.\
 """
 
-doc_ex_total = """\
-Examples
---------
->>> adata = AnnData(np.array([[1, 0], [3, 0], [5, 6]]))
->>> print(adata.X.sum(axis=1))
-[  1.   3.  11.]
->>> sc.pp.normalize_total(adata, key_added='n_counts')
->>> print(adata.obs)
->>> print(adata.X.sum(axis=1))
-   n_counts
-0       1.0
-1       3.0
-2      11.0
-[ 3.  3.  3.]
->>> sc.pp.normalize_total(adata, target_sum=1,
->>>                       key_added='n_counts2')
->>> print(adata.obs)
->>> print(adata.X.sum(axis=1))
-   n_counts  n_counts2
-0       1.0        3.0
-1       3.0        3.0
-2      11.0        3.0
-[ 1.  1.  1.]\
+doc_adata_basic = """\
+adata
+    Annotated data matrix.\
 """

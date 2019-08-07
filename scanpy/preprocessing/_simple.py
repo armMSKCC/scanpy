@@ -3,7 +3,7 @@
 Compositions of these functions are found in sc.preprocess.recipes.
 """
 import warnings
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, Collection
 
 import numba
 import numpy as np
@@ -13,9 +13,9 @@ from sklearn.utils import sparsefuncs
 from pandas.api.types import is_categorical_dtype
 from anndata import AnnData
 
-from .. import settings as sett
+from .._settings import settings as sett
 from .. import logging as logg
-from ..utils import sanitize_anndata, deprecated_arg_names
+from ..utils import sanitize_anndata, deprecated_arg_names, view_to_actual
 from ._distributed import materialize_as_ndarray
 from ._utils import _get_mean_var
 
@@ -39,7 +39,7 @@ def filter_cells(
     max_genes:  Optional[int] = None,
     inplace: bool = True,
     copy: bool = False,
-):
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     """Filter cell outliers based on counts and numbers of genes expressed.
 
     For instance, only keep cells with at least `min_counts` counts or
@@ -67,16 +67,15 @@ def filter_cells(
 
     Returns
     -------
-    `tuple`, `None`
-        Depending on `inplace`, returns the following arrays or directly subsets
-        and annotates the data matrix
+    Depending on ``inplace``, returns the following arrays or directly subsets
+    and annotates the data matrix:
 
-        cells_subset : :class:`~numpy.ndarray`
-            Boolean index mask that does filtering. `True` means that the
-            cell is kept. `False` means the cell is removed.
-        number_per_cell : :class:`~numpy.ndarray`
-            Depending on what was tresholded (`counts` or `genes`), the array stores
-            `n_counts` or `n_cells` per gene.
+    cells_subset : numpy.ndarray
+        Boolean index mask that does filtering. ``True`` means that the
+        cell is kept. ``False`` means the cell is removed.
+    number_per_cell : numpy.ndarray
+        Depending on what was tresholded (``counts`` or ``genes``), the array stores
+        ``n_counts`` or ``n_cells`` per gene.
 
     Examples
     --------
@@ -109,7 +108,7 @@ def filter_cells(
     3
     """
     if copy:
-       logg.warn('`copy` is deprecated, use `inplace` instead.')
+       logg.warning('`copy` is deprecated, use `inplace` instead.')
     n_given_options = sum(
         option is not None for option in
         [min_genes, min_counts, max_genes, max_counts])
@@ -121,7 +120,7 @@ def filter_cells(
         adata = data.copy() if copy else data
         cell_subset, number = materialize_as_ndarray(filter_cells(adata.X, min_counts, min_genes, max_counts, max_genes))
         if not inplace:
-            return gene_subset, number
+            return cell_subset, number
         if min_genes is None and max_genes is None: adata.obs['n_counts'] = number
         else: adata.obs['n_genes'] = number
         adata._inplace_subset_obs(cell_subset)
@@ -139,15 +138,14 @@ def filter_cells(
 
     s = np.sum(~cell_subset)
     if s > 0:
-        logg.info('filtered out {} cells that have'.format(s), end=' ')
+        msg = f'filtered out {s} cells that have'
         if min_genes is not None or min_counts is not None:
-            logg.info('less than',
-                   str(min_genes) + ' genes expressed'
-                   if min_counts is None else str(min_counts) + ' counts', no_indent=True)
+            msg += 'less than '
+            msg += f'{min_genes} genes expressed' if min_counts is None else f'{min_counts} counts'
         if max_genes is not None or max_counts is not None:
-            logg.info('more than ',
-                   str(max_genes) + ' genes expressed'
-                   if max_counts is None else str(max_counts) + ' counts', no_indent=True)
+            msg += 'more than '
+            msg += f'{max_genes} genes expressed' if max_counts is None else f'{max_counts} counts'
+        logg.info(msg)
     return cell_subset, number_per_cell
 
 
@@ -159,7 +157,7 @@ def filter_genes(
     max_cells:  Optional[int] = None,
     inplace: bool = True,
     copy: bool = False,
-):
+) -> Union[AnnData, None, Tuple[np.ndarray, np.ndarray]]:
     """Filter genes based on number of cells or counts.
 
     Keep genes that have at least ``min_counts`` counts or are expressed in at
@@ -187,19 +185,18 @@ def filter_genes(
 
     Returns
     -------
-    `tuple`, `None`
-        Depending on `inplace`, returns the following arrays or directly subsets
-        and annotates the data matrix
+    Depending on `inplace`, returns the following arrays or directly subsets
+    and annotates the data matrix
 
-        gene_subset : :class:`~numpy.ndarray`
-            Boolean index mask that does filtering. `True` means that the
-            gene is kept. `False` means the gene is removed.
-        number_per_gene : :class:`~numpy.ndarray`
-            Depending on what was tresholded (`counts` or `cells`), the array stores
-            `n_counts` or `n_cells` per gene.
+    gene_subset : numpy.ndarray
+        Boolean index mask that does filtering. `True` means that the
+        gene is kept. `False` means the gene is removed.
+    number_per_gene : numpy.ndarray
+        Depending on what was tresholded (`counts` or `cells`), the array stores
+        `n_counts` or `n_cells` per gene.
     """
     if copy:
-       logg.warn('`copy` is deprecated, use `inplace` instead.')
+       logg.warning('`copy` is deprecated, use `inplace` instead.')
     n_given_options = sum(
         option is not None for option in
         [min_cells, min_counts, max_cells, max_counts])
@@ -237,15 +234,14 @@ def filter_genes(
 
     s = np.sum(~gene_subset)
     if s > 0:
-        logg.info('filtered out {} genes that are detected'.format(s), end=' ')
+        msg = f'filtered out {s} genes that are detected'
         if min_cells is not None or min_counts is not None:
-            logg.info('in less than',
-                   str(min_cells) + ' cells'
-                   if min_counts is None else str(min_counts) + ' counts', no_indent=True)
+            msg += 'in less than '
+            msg += f'{min_cells} cells' if min_counts is None else f'{min_counts} counts'
         if max_cells is not None or max_counts is not None:
-            logg.info('in more than ',
-                   str(max_cells) + ' cells'
-                   if max_counts is None else str(max_counts) + ' counts', no_indent=True)
+            msg += 'in more than '
+            msg += f'{max_cells} cells' if max_counts is None else f'{max_counts} counts'
+        logg.info(msg)
     return gene_subset, number_per_gene
 
 
@@ -254,7 +250,7 @@ def log1p(
     copy: bool = False,
     chunked: bool = False,
     chunk_size: Optional[int] = None,
-):
+) -> Optional[AnnData]:
     """Logarithmize the data matrix.
 
     Computes :math:`X = \\log(X + 1)`, where :math:`log` denotes the natural logarithm.
@@ -275,8 +271,7 @@ def log1p(
 
     Returns
     -------
-    AnnData, `None`
-        Returns or updates ``data``, depending on ``copy``.
+    Returns or updates ``data``, depending on ``copy``.
     """
     if copy:
         if not isinstance(data, AnnData):
@@ -285,6 +280,9 @@ def log1p(
             data = data.copy()
     elif not isinstance(data, AnnData) and np.issubdtype(data.dtype, np.integer):
         raise TypeError("Cannot perform inplace log1p on integer array")
+
+    if isinstance(data, AnnData) and data.isview:
+        view_to_actual(data)
 
     def _log1p(X):
         if issparse(X):
@@ -312,7 +310,7 @@ def sqrt(
     copy: bool = False,
     chunked: bool = False,
     chunk_size: Optional[int] = None,
-):
+) -> Optional[AnnData]:
     """Square root the data matrix.
 
     Computes :math:`X = \\sqrt(X)`.
@@ -333,8 +331,7 @@ def sqrt(
 
     Returns
     -------
-    AnnData, None
-        Returns or updates `data`, depending on `copy`.
+    Returns or updates `data`, depending on `copy`.
     """
     if isinstance(data, AnnData):
         adata = data.copy() if copy else data
@@ -418,11 +415,10 @@ def pca(
 
     Returns
     -------
-
     X_pca : :class:`scipy.sparse.spmatrix` or :class:`numpy.ndarray`
         If `data` is array-like and ``return_info=False`` was passed,
         this function only returns `X_pca`…
-    adata : :class:`~anndata.AnnData`
+    adata : anndata.AnnData
         …otherwise if ``copy=True`` it returns or else adds fields to ``adata``:
 
         ``.obsm['X_pca']``
@@ -443,7 +439,8 @@ def pca(
             'Note that scikit-learn\'s randomized PCA might not be exactly '
             'reproducible across different computational platforms. For exact '
             'reproducibility, choose `svd_solver=\'arpack\'.` This will likely '
-            'become the Scanpy default in the future.')
+            'become the Scanpy default in the future.'
+        )
 
     data_is_AnnData = isinstance(data, AnnData)
     if data_is_AnnData:
@@ -451,12 +448,14 @@ def pca(
     else:
         adata = AnnData(data)
 
-    logg.msg('computing PCA with n_comps =', n_comps, r=True, v=4)
+    start = logg.info(f'computing PCA with n_comps = {n_comps}')
 
     if adata.n_vars < n_comps:
         n_comps = adata.n_vars - 1
-        logg.msg('reducing number of computed PCs to',
-               n_comps, 'as dim of data is only', adata.n_vars, v=4)
+        logg.debug(
+            f'reducing number of computed PCs to {n_comps} '
+            f'as dim of data is only {adata.n_vars}'
+        )
 
     if use_highly_variable is True and 'highly_variable' not in adata.var.keys():
         raise ValueError('Did not find adata.var[\'highly_variable\']. '
@@ -464,11 +463,13 @@ def pca(
                          'or consider running `pp.filter_genes_dispersion` first.')
     if use_highly_variable is None:
         use_highly_variable = True if 'highly_variable' in adata.var.keys() else False
+    if use_highly_variable:
+        logg.info('computing PCA on highly variable genes')
     adata_comp = adata[:, adata.var['highly_variable']] if use_highly_variable else adata
 
     if chunked:
         if not zero_center or random_state or svd_solver != 'auto':
-            logg.msg('Ignoring zero_center, random_state, svd_solver', v=4)
+            logg.debug('Ignoring zero_center, random_state, svd_solver')
 
         from sklearn.decomposition import IncrementalPCA
 
@@ -489,19 +490,23 @@ def pca(
         if zero_center:
             from sklearn.decomposition import PCA
             if issparse(adata_comp.X):
-                logg.msg('    as `zero_center=True`, '
-                       'sparse input is densified and may '
-                       'lead to huge memory consumption', v=4)
+                logg.debug(
+                    '    as `zero_center=True`, '
+                    'sparse input is densified and may '
+                    'lead to huge memory consumption',
+                )
                 X = adata_comp.X.toarray()  # Copying the whole adata_comp.X here, could cause memory problems
             else:
                 X = adata_comp.X
             pca_ = PCA(n_components=n_comps, svd_solver=svd_solver, random_state=random_state)
         else:
             from sklearn.decomposition import TruncatedSVD
-            logg.msg('    without zero-centering: \n'
-                   '    the explained variance does not correspond to the exact statistical defintion\n'
-                   '    the first component, e.g., might be heavily influenced by different means\n'
-                   '    the following components often resemble the exact PCA very closely', v=4)
+            logg.debug(
+                '    without zero-centering: \n'
+                '    the explained variance does not correspond to the exact statistical defintion\n'
+                '    the first component, e.g., might be heavily influenced by different means\n'
+                '    the following components often resemble the exact PCA very closely'
+            )
             pca_ = TruncatedSVD(n_components=n_comps, random_state=random_state)
             X = adata_comp.X
         X_pca = pca_.fit_transform(X)
@@ -518,23 +523,33 @@ def pca(
         adata.uns['pca'] = {}
         adata.uns['pca']['variance'] = pca_.explained_variance_
         adata.uns['pca']['variance_ratio'] = pca_.explained_variance_ratio_
-        logg.msg('    finished', t=True, end=' ', v=4)
-        logg.msg('and added\n'
-                 '    \'X_pca\', the PCA coordinates (adata.obs)\n'
-                 '    \'PC1\', \'PC2\', ..., the loadings (adata.var)\n'
-                 '    \'pca_variance\', the variance / eigenvalues (adata.uns)\n'
-                 '    \'pca_variance_ratio\', the variance ratio (adata.uns)', v=4)
+        logg.info('    finished', time=start)
+        logg.debug(
+            'and added\n'
+            '    \'X_pca\', the PCA coordinates (adata.obs)\n'
+            '    \'PC1\', \'PC2\', ..., the loadings (adata.var)\n'
+            '    \'pca_variance\', the variance / eigenvalues (adata.uns)\n'
+            '    \'pca_variance_ratio\', the variance ratio (adata.uns)'
+        )
         return adata if copy else None
     else:
+        logg.info('    finished', time=start)
         if return_info:
             return X_pca, pca_.components_, pca_.explained_variance_ratio_, pca_.explained_variance_
         else:
             return X_pca
 
 
-def normalize_per_cell(data, counts_per_cell_after=None, counts_per_cell=None,
-                       key_n_counts=None, copy=False, layers=[], use_rep=None,
-                       min_counts=1):
+def normalize_per_cell(
+    data,
+    counts_per_cell_after=None,
+    counts_per_cell=None,
+    key_n_counts=None,
+    copy=False,
+    layers=[],
+    use_rep=None,
+    min_counts=1,
+) -> Optional[AnnData]:
     """Normalize total counts per cell.
 
     .. warning::
@@ -576,9 +591,8 @@ def normalize_per_cell(data, counts_per_cell_after=None, counts_per_cell=None,
 
     Returns
     -------
-    AnnData, `None`
-        Returns or updates `adata` with normalized version of the original
-        `adata.X`, depending on `copy`.
+    Returns or updates `adata` with normalized version of the original
+    `adata.X`, depending on `copy`.
 
     Examples
     --------
@@ -606,7 +620,7 @@ def normalize_per_cell(data, counts_per_cell_after=None, counts_per_cell=None,
     """
     if key_n_counts is None: key_n_counts = 'n_counts'
     if isinstance(data, AnnData):
-        logg.msg('normalizing by total count per cell', r=True)
+        start = logg.info('normalizing by total count per cell')
         adata = data.copy() if copy else data
         if counts_per_cell is None:
             cell_subset, counts_per_cell = materialize_as_ndarray(
@@ -630,10 +644,11 @@ def normalize_per_cell(data, counts_per_cell_after=None, counts_per_cell=None,
             temp = normalize_per_cell(adata.layers[layer], after, counts, copy=True)
             adata.layers[layer] = temp
 
-        logg.msg('    finished', t=True, end=': ')
-        logg.msg('normalized adata.X and added', no_indent=True)
-        logg.msg('    \'{}\', counts per cell before normalization (adata.obs)'
-            .format(key_n_counts))
+        logg.info(
+            '    finished ({time_passed}): normalized adata.X and added'
+            f'    {key_n_counts!r}, counts per cell before normalization (adata.obs)',
+            time=start,
+        )
         return adata if copy else None
     # proceed with data matrix
     X = data.copy() if copy else data
@@ -654,8 +669,11 @@ def normalize_per_cell(data, counts_per_cell_after=None, counts_per_cell=None,
     return X if copy else None
 
 
-def normalize_per_cell_weinreb16_deprecated(X, max_fraction=1,
-                                            mult_with_mean=False):
+def normalize_per_cell_weinreb16_deprecated(
+    X,
+    max_fraction=1,
+    mult_with_mean=False,
+) -> np.ndarray:
     """Normalize each cell [Weinreb17]_.
 
     This is a deprecated version. See `normalize_per_cell` instead.
@@ -675,8 +693,7 @@ def normalize_per_cell_weinreb16_deprecated(X, max_fraction=1,
 
     Returns
     -------
-    X_norm : np.ndarray
-        Normalized version of the original expression matrix.
+    Normalized version of the original expression matrix.
     """
     if max_fraction < 0 or max_fraction > 1:
         raise ValueError('Choose max_fraction between 0 and 1.')
@@ -693,7 +710,7 @@ def normalize_per_cell_weinreb16_deprecated(X, max_fraction=1,
     return X_norm
 
 
-def regress_out(adata, keys, n_jobs=None, copy=False):
+def regress_out(adata, keys, n_jobs=None, copy=False) -> Optional[AnnData]:
     """Regress out unwanted sources of variation.
 
     Uses simple linear regression. This is inspired by Seurat's `regressOut`
@@ -713,14 +730,18 @@ def regress_out(adata, keys, n_jobs=None, copy=False):
 
     Returns
     -------
-    AnnData, None
-        Depending on `copy` returns or updates `adata` with the corrected data matrix.
+    Depending on `copy` returns or updates `adata` with the corrected data matrix.
     """
-    logg.info('regressing out', keys, r=True)
+    start = logg.info(f'regressing out {keys}')
     if issparse(adata.X):
-        logg.info('    sparse input is densified and may '
-                  'lead to high memory use')
+        logg.info(
+            '    sparse input is densified and may '
+            'lead to high memory use'
+        )
     adata = adata.copy() if copy else adata
+
+    sanitize_anndata(adata)
+
     if isinstance(keys, str):
         keys = [keys]
 
@@ -730,7 +751,6 @@ def regress_out(adata, keys, n_jobs=None, copy=False):
     n_jobs = sett.n_jobs if n_jobs is None else n_jobs
 
     # regress on a single categorical variable
-    sanitize_anndata(adata)
     variable_is_categorical = False
     if keys[0] in adata.obs_keys() and is_categorical_dtype(adata.obs[keys[0]]):
         if len(keys) > 1:
@@ -738,7 +758,7 @@ def regress_out(adata, keys, n_jobs=None, copy=False):
                 'If providing categorical variable, '
                 'only a single one is allowed. For this one '
                 'we regress on the mean for each category.')
-        logg.msg('... regressing on per-gene means within categories')
+        logg.debug('... regressing on per-gene means within categories')
         regressors = np.zeros(adata.X.shape, dtype='float32')
         for category in adata.obs[keys[0]].cat.categories:
             mask = (category == adata.obs[keys[0]]).values
@@ -786,7 +806,7 @@ def regress_out(adata, keys, n_jobs=None, copy=False):
     # res is a list of vectors (each corresponding to a regressed gene column).
     # The transpose is needed to get the matrix in the shape needed
     adata.X = np.vstack(res).T.astype(adata.X.dtype)
-    logg.info('    finished', t=True)
+    logg.info('    finished', time=start)
     return adata if copy else None
 
 
@@ -810,7 +830,7 @@ def _regress_out_chunk(data):
             result = sm.GLM(data_chunk[:, col_index], regres, family=sm.families.Gaussian()).fit()
             new_column = result.resid_response
         except PerfectSeparationError:  # this emulates R's behavior
-            logg.warn('Encountered PerfectSeparationError, setting to 0 as in R.')
+            logg.warning('Encountered PerfectSeparationError, setting to 0 as in R.')
             new_column = np.zeros(data_chunk.shape[0])
 
         responses_chunk_list.append(new_column)
@@ -818,8 +838,13 @@ def _regress_out_chunk(data):
     return np.vstack(responses_chunk_list)
 
 
-def scale(data, zero_center=True, max_value=None, copy=False):
+def scale(data, zero_center=True, max_value=None, copy=False) -> Optional[AnnData]:
     """Scale data to unit variance and zero mean.
+
+    .. note::
+        Variables (genes) that do not display any variation (are constant across
+        all observations) are retained and set to 0 during this operation. In
+        the future, they might be set to NaNs.
 
     Parameters
     ----------
@@ -837,31 +862,31 @@ def scale(data, zero_center=True, max_value=None, copy=False):
 
     Returns
     -------
-    AnnData, None
-        Depending on `copy` returns or updates `adata` with a scaled `adata.X`.
+    Depending on `copy` returns or updates `adata` with a scaled `adata.X`.
     """
     if isinstance(data, AnnData):
         adata = data.copy() if copy else data
+        view_to_actual(adata)
         # need to add the following here to make inplace logic work
         if zero_center and issparse(adata.X):
-            logg.msg(
+            logg.debug(
                 '... scale_data: as `zero_center=True`, sparse input is '
-                'densified and may lead to large memory consumption')
+                'densified and may lead to large memory consumption'
+            )
             adata.X = adata.X.toarray()
         scale(adata.X, zero_center=zero_center, max_value=max_value, copy=False)
         return adata if copy else None
     X = data.copy() if copy else data  # proceed with the data matrix
     zero_center = zero_center if zero_center is not None else False if issparse(X) else True
     if not zero_center and max_value is not None:
-        logg.msg(
-            '... scale_data: be careful when using `max_value` without `zero_center`',
-            v=4)
+        logg.debug('... scale_data: be careful when using `max_value` without `zero_center`')
     if max_value is not None:
-        logg.msg('... clipping at max_value', max_value)
+        logg.debug(f'... clipping at max_value {max_value}')
     if zero_center and issparse(X):
-        logg.msg('... scale_data: as `zero_center=True`, sparse input is '
-                 'densified and may lead to large memory consumption, returning copy',
-                 v=4)
+        logg.debug(
+            '... scale_data: as `zero_center=True`, sparse input is '
+            'densified and may lead to large memory consumption, returning copy'
+        )
         X = X.toarray()
         copy = True
     _scale(X, zero_center)
@@ -869,7 +894,7 @@ def scale(data, zero_center=True, max_value=None, copy=False):
     return X if copy else None
 
 
-def subsample(data, fraction=None, n_obs=None, random_state=0, copy=False):
+def subsample(data, fraction=None, n_obs=None, random_state=0, copy=False) -> Optional[AnnData]:
     """Subsample to a fraction of the number of observations.
 
     Parameters
@@ -889,10 +914,9 @@ def subsample(data, fraction=None, n_obs=None, random_state=0, copy=False):
 
     Returns
     -------
-    AnnData, None
-        Returns `X[obs_indices], obs_indices` if data is array-like, otherwise
-        subsamples the passed :class:`~anndata.AnnData` (`copy == False`) or
-        returns a subsampled copy of it (`copy == True`).
+    Returns `X[obs_indices], obs_indices` if data is array-like, otherwise
+    subsamples the passed :class:`~anndata.AnnData` (`copy == False`) or
+    returns a subsampled copy of it (`copy == True`).
     """
     np.random.seed(random_state)
     old_n_obs = data.n_obs if isinstance(data, AnnData) else data.shape[0]
@@ -903,7 +927,7 @@ def subsample(data, fraction=None, n_obs=None, random_state=0, copy=False):
             raise ValueError('`fraction` needs to be within [0, 1], not {}'
                              .format(fraction))
         new_n_obs = int(fraction * old_n_obs)
-        logg.msg('... subsampled to {} data points'.format(new_n_obs))
+        logg.debug(f'... subsampled to {new_n_obs} data points')
     else:
         raise ValueError('Either pass `n_obs` or `fraction`.')
     obs_indices = np.random.choice(old_n_obs, size=new_n_obs, replace=False)
@@ -919,14 +943,13 @@ def subsample(data, fraction=None, n_obs=None, random_state=0, copy=False):
 @deprecated_arg_names({"target_counts": "counts_per_cell"})
 def downsample_counts(
     adata: AnnData,
-    counts_per_cell: Optional[int] = None,
+    counts_per_cell: Optional[Union[int, Collection[int]]] = None,
     total_counts: Optional[int] = None,
     random_state: Optional[int] = 0,
     replace: bool = False,
     copy: bool = False,
 ) -> Optional[AnnData]:
-    """
-    Downsample counts from count matrix.
+    """Downsample counts from count matrix.
 
     If `counts_per_cell` is specified, each cell will downsampled. If
     `total_counts` is specified, expression matrix will be downsampled to
@@ -938,7 +961,9 @@ def downsample_counts(
         Annotated data matrix.
     counts_per_cell
         Target total counts per cell. If a cell has more than 'counts_per_cell',
-        it will be downsampled to this number.
+        it will be downsampled to this number. Resulting counts can be specified
+        on a per cell basis by passing an array.Should be an integer or integer
+        ndarray with same length as number of obs.
     total_counts
         Target total counts. If the count matrix has more than `total_counts`
         it will be downsampled to have this number.
@@ -952,44 +977,57 @@ def downsample_counts(
 
     Returns
     -------
-    AnnData, None
-        Depending on `copy` returns or updates an `adata` with downsampled `.X`.
+    Depending on `copy` returns or updates an `adata` with downsampled `.X`.
     """
-    if type(total_counts) == type(counts_per_cell):
+    # This logic is all dispatch
+    total_counts_call = total_counts is not None
+    counts_per_cell_call = counts_per_cell is not None
+    if total_counts_call is counts_per_cell_call:
         raise ValueError("Must specify exactly one of `total_counts` or `counts_per_cell`.")
     if copy:
         adata = adata.copy()
     adata.X = adata.X.astype(np.integer)  # Numba doesn't want floats
-    if total_counts:
+    if total_counts_call:
         adata.X = _downsample_total_counts(adata.X, total_counts, random_state, replace)
-    elif counts_per_cell:
+    elif counts_per_cell_call:
         adata.X = _downsample_per_cell(adata.X, counts_per_cell, random_state, replace)
     if copy:
         return adata
 
 
 def _downsample_per_cell(X, counts_per_cell, random_state, replace):
+    n_obs = X.shape[0]
+    if isinstance(counts_per_cell, int):
+        counts_per_cell = np.full(n_obs, counts_per_cell)
+    else:
+        counts_per_cell = np.asarray(counts_per_cell)
+    if not isinstance(counts_per_cell, np.ndarray) or len(counts_per_cell) != n_obs:
+        raise ValueError(
+            "If provided, 'counts_per_cell' must be either an integer, or "
+            "coercible to an `np.ndarray` of length as number of observations"
+            " by `np.asarray(counts_per_cell)`."
+        )
     if issparse(X):
         original_type = type(X)
         if not isspmatrix_csr(X):
             X = csr_matrix(X)
-        totals = np.ravel(X.sum(axis=1))
+        totals = np.ravel(X.sum(axis=1))  # Faster for csr matrix
         under_target = np.nonzero(totals > counts_per_cell)[0]
-        cols = np.split(X.data.view(), X.indptr[1:-1])
-        for colidx in under_target:
-            col = cols[colidx]
-            _downsample_array(col, counts_per_cell, random_state=random_state,
+        rows = np.split(X.data.view(), X.indptr[1:-1])
+        for rowidx in under_target:
+            row = rows[rowidx]
+            _downsample_array(row, counts_per_cell[rowidx], random_state=random_state,
                               replace=replace, inplace=True)
         X.eliminate_zeros()
-        if original_type is not csr_matrix: # Put it back
+        if original_type is not csr_matrix:  # Put it back
             X = original_type(X)
     else:
         totals = np.ravel(X.sum(axis=1))
         under_target = np.nonzero(totals > counts_per_cell)[0]
-        X[under_target, :] = \
-            np.apply_along_axis(_downsample_array, 1, X[under_target, :],
-                                counts_per_cell, random_state=random_state, 
-                                replace=replace)
+        for rowidx in under_target:
+            row = X[rowidx, :].view()
+            _downsample_array(row, counts_per_cell[rowidx], random_state=random_state,
+                              replace=replace, inplace=True)
     return X
 
 
@@ -1041,7 +1079,7 @@ def _downsample_array(col: np.array, target: int, random_state: int=0,
     return col
 
 
-def zscore_deprecated(X):
+def zscore_deprecated(X: np.ndarray) -> np.ndarray:
     """Z-score standardize each variable/gene in X.
 
     Use `scale` instead.
@@ -1050,13 +1088,12 @@ def zscore_deprecated(X):
 
     Parameters
     ----------
-    X : np.ndarray
+    X
         Data matrix. Rows correspond to cells and columns to genes.
 
     Returns
     -------
-    XZ : np.ndarray
-        Z-score standardized version of the data matrix.
+    Z-score standardized version of the data matrix.
     """
     means = np.tile(np.mean(X, axis=0)[None, :], (X.shape[0], 1))
     stds = np.tile(np.std(X, axis=0)[None, :], (X.shape[0], 1))
@@ -1102,6 +1139,7 @@ def _scale(X, zero_center=True):
             sparsefuncs.inplace_column_scale(X, 1/scale)
         else:
             X -= mean
+            scale[scale == 0] = 1e-12
             X /= scale
     else:
         from sklearn.preprocessing import StandardScaler

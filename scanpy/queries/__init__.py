@@ -2,7 +2,7 @@ import pandas as pd
 from .. import logging as logg
 
 
-def mitochondrial_genes(host, org):
+def mitochondrial_genes(host, org) -> pd.Index:
     """Mitochondrial gene symbols for specific organism through BioMart.
 
     Parameters
@@ -15,7 +15,7 @@ def mitochondrial_genes(host, org):
 
     Returns
     -------
-    A `pd.Index` containing mitochondrial gene symbols.
+    A :class:`pandas.Index` containing mitochondrial gene symbols.
     """
     try:
         from bioservices import biomart
@@ -37,7 +37,7 @@ def mitochondrial_genes(host, org):
         s.add_dataset_to_xml('drerio_gene_ensembl')
         s.add_attribute_to_xml('zfin_id_symbol')
     else:
-        logg.msg('organism ', str(org), ' is unavailable', v=4, no_indent=True)
+        logg.debug(f'organism {org} is unavailable')
         return None
     s.add_attribute_to_xml('chromosome_name')
     xml = s.get_xml()
@@ -53,7 +53,7 @@ def mitochondrial_genes(host, org):
     return res.index
 
 
-def gene_coordinates(host, org, gene, chr_exclude=[]):
+def gene_coordinates(host, org, gene, chr_exclude=[]) -> pd.DataFrame:
     """Retrieve gene coordinates for specific organism through BioMart.
     Parameters
     ----------
@@ -91,7 +91,7 @@ def gene_coordinates(host, org, gene, chr_exclude=[]):
         s.add_dataset_to_xml('drerio_gene_ensembl')
         s.add_attribute_to_xml('zfin_id_symbol')
     else:
-        logg.msg('organism ', str(org), ' is unavailable', v=4, no_indent=True)
+        logg.debug(f'organism {org} is unavailable')
         return None
     s.add_attribute_to_xml('chromosome_name')
     s.add_attribute_to_xml('start_position')

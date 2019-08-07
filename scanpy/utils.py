@@ -3,19 +3,21 @@
 
 import sys
 import inspect
+from pathlib import Path
 from weakref import WeakSet
 from collections import namedtuple
 from functools import partial, wraps
-from types import ModuleType
+from types import ModuleType, MethodType
 from typing import Union, Callable, Optional
 
 import numpy as np
-import scipy.sparse
+from scipy import sparse
 from natsort import natsorted
 from textwrap import dedent
 from pandas.api.types import CategoricalDtype
 
-from . import settings, logging as logg
+from ._settings import settings
+from . import logging as logg
 import warnings
 
 EPS = 1e-15
@@ -24,18 +26,33 @@ EPS = 1e-15
 def check_versions():
     from distutils.version import LooseVersion
 
-    if sys.version_info < (3, 0):
-        warnings.warn('Scanpy only runs reliably with Python 3, preferrably >=3.5.')
+    try:
+        from importlib.metadata import version
+    except ImportError:  # < Python 3.8: Use backport module
+        from importlib_metadata import version
 
-    import anndata
-    # NOTE: pytest does not correctly retrieve anndata's version? why?
-    #       use the following hack...
-    if anndata.__version__ != '0+unknown':
-        if anndata.__version__ < LooseVersion('0.6.10'):
-            from . import __version__
-            raise ImportError('Scanpy {} needs anndata version >=0.6.10, not {}.\n'
-                              'Run `pip install anndata -U --no-deps`.'
-                              .format(__version__, anndata.__version__))
+    if sys.version_info < (3, 6):
+        warnings.warn('Scanpy prefers Python 3.6 or higher. '
+                      'Currently, Python 3.5 leads to a bug in `tl.marker_gene_overlap` '
+                      'and we might stop supporting it in the future.')
+
+    anndata_version = version("anndata")
+    umap_version = version("umap-learn")
+
+    if anndata_version < LooseVersion('0.6.10'):
+        from . import __version__
+        raise ImportError('Scanpy {} needs anndata version >=0.6.10, not {}.\n'
+                            'Run `pip install anndata -U --no-deps`.'
+                            .format(__version__, anndata_version))
+
+    if umap_version < LooseVersion('0.3.0'):
+        from . import __version__
+        # make this a warning, not an error
+        # it might be useful for people to still be able to run it
+        logg.warning(
+            f'Scanpy {__version__} needs umap '
+            f'version >=0.3.0, not {umap_version}.'
+        )
 
 
 def getdoc(c_or_f: Union[Callable, type]) -> Optional[str]:
@@ -101,10 +118,12 @@ def descend_classes_and_funcs(mod: ModuleType, root: str, encountered=None):
     for obj in vars(mod).values():
         if not getattr(obj, '__module__', getattr(obj, '__qualname__', getattr(obj, '__name__', ''))).startswith(root):
             continue
-        if isinstance(obj, Callable):
+        if isinstance(obj, Callable) and not isinstance(obj, MethodType):
             yield obj
             if isinstance(obj, type):
-                yield from (m for m in vars(obj).values() if isinstance(m, Callable))
+                for m in vars(obj).values():
+                    if isinstance(m, Callable) and getattr(m, '__module__', None) != 'builtins':
+                        yield m
         elif isinstance(obj, ModuleType) and obj not in encountered:
             encountered.add(obj)
             yield from descend_classes_and_funcs(obj, root, encountered)
@@ -214,10 +233,11 @@ def cross_entropy_neighbors_in_rep(adata, use_rep, n_points=3):
     n_edges_ref = len(graph_ref.nonzero()[0])
     n_edges_cmp = len(graph_cmp.nonzero()[0])
     n_edges_union = len(edgeset_union)
-    logg.msg(
-        '... n_edges_ref', n_edges_ref,
-        'n_edges_cmp', n_edges_cmp,
-        'n_edges_union', n_edges_union)
+    logg.debug(
+        f'... n_edges_ref {n_edges_ref} '
+        f'n_edges_cmp {n_edges_cmp} '
+        f'n_edges_union {n_edges_union} '
+    )
 
     graph_ref = graph_ref.tocsr()  # need a copy of the csr graph anyways
     graph_cmp = graph_cmp.tocsr()
@@ -241,19 +261,19 @@ def cross_entropy_neighbors_in_rep(adata, use_rep, n_points=3):
     fraction_edges = n_edges_ref / n_edges_fully_connected
     naive_entropy = (fraction_edges * np.log(1./fraction_edges)
                      + (1-fraction_edges) * np.log(1./(1-fraction_edges)))
-    logg.msg('cross entropy of naive sparse prediction {:.3e}'.format(naive_entropy))
-    logg.msg('cross entropy of random prediction {:.3e}'.format(-np.log(0.5)))
-    logg.info('cross entropy {:.3e}'.format(entropy))
+    logg.debug(f'cross entropy of naive sparse prediction {naive_entropy:.3e}')
+    logg.debug(f'cross entropy of random prediction {-np.log(0.5):.3e}')
+    logg.info(f'cross entropy {entropy:.3e}')
 
     # for manifold analysis, restrict to largest connected component in
     # reference
     # now that we clip at a quite high value below, this might not even be
     # necessary
-    n_components, labels = scipy.sparse.csgraph.connected_components(graph_ref)
+    n_components, labels = sparse.csgraph.connected_components(graph_ref)
     largest_component = np.arange(graph_ref.shape[0], dtype=int)
     if n_components > 1:
         component_sizes = np.bincount(labels)
-        logg.msg('largest component has size', component_sizes.max())
+        logg.debug(f'largest component has size {component_sizes.max()}')
         largest_component = np.where(
             component_sizes == component_sizes.max())[0][0]
         graph_ref_red = graph_ref.tocsr()[labels == largest_component, :]
@@ -314,18 +334,18 @@ def cross_entropy_neighbors_in_rep(adata, use_rep, n_points=3):
             adata_ref.uns['highlights'][points2[ip]] = 'D' + str(ip)
             found_disconnected_points = True
     if found_disconnected_points:
-        logg.msg('most disconnected points', points)
-        logg.msg('    with weights', weights[max_weights].round(1))
+        logg.debug(f'most disconnected points {points}')
+        logg.debug(f'    with weights {weights[max_weights].round(1)}')
 
     max_weights = np.argpartition(
         weights_overlap, kth=-n_points)[-n_points:]
     points = list(edgeset_union_indices[0][max_weights])
     for p in points:
         adata_ref.uns['highlights'][p] = 'O'
-    logg.msg('most overlapping points', points)
-    logg.msg('    with weights', weights_overlap[max_weights].round(1))
-    logg.msg('    with d_rep', d_cmp[max_weights].round(1))
-    logg.msg('    with d_ref', d_ref[max_weights].round(1))
+    logg.debug(f'most overlapping points {points}')
+    logg.debug(f'    with weights {weights_overlap[max_weights].round(1)}')
+    logg.debug(f'    with d_rep {d_cmp[max_weights].round(1)}')
+    logg.debug(f'    with d_ref {d_ref[max_weights].round(1)}')
 
     geo_entropy_d = np.sum(weights * p_ref * np.log(ratio))
     geo_entropy_o = np.sum(weights_overlap * (1-p_ref) * np.log(ratio_1m))
@@ -333,7 +353,7 @@ def cross_entropy_neighbors_in_rep(adata, use_rep, n_points=3):
     geo_entropy_d /= n_edges_fully_connected
     geo_entropy_o /= n_edges_fully_connected
 
-    logg.info('geodesic cross entropy {:.3e}'.format(geo_entropy_d + geo_entropy_o))
+    logg.info(f'geodesic cross entropy {geo_entropy_d + geo_entropy_o:.3e}')
     return entropy, geo_entropy_d, geo_entropy_o
 
 
@@ -371,9 +391,10 @@ def get_igraph_from_adjacency(adjacency, directed=None):
     except:
         pass
     if g.vcount() != adjacency.shape[0]:
-        logg.warn('The constructed graph has only {} nodes. '
-                  'Your adjacency matrix contained redundant nodes.'
-                  .format(g.vcount()))
+        logg.warning(
+            f'The constructed graph has only {g.vcount()} nodes. '
+            'Your adjacency matrix contained redundant nodes.'
+        )
     return g
 
 
@@ -394,6 +415,9 @@ def get_sparse_from_igraph(graph, weight_attr=None):
     else:
         return csr_matrix(shape)
 
+# --------------------------------------------------------------------------------
+# Group stuff
+# --------------------------------------------------------------------------------
 
 def compute_association_matrix_of_groups(adata, prediction, reference,
                                          normalization='prediction',
@@ -433,9 +457,10 @@ def compute_association_matrix_of_groups(adata, prediction, reference,
     cats = adata.obs[reference].cat.categories
     for cat in cats:
         if cat in settings.categories_to_ignore:
-            logg.info('Ignoring category \'{}\' '
-                      'as it\'s in `settings.categories_to_ignore`.'
-                      .format(cat))
+            logg.info(
+                f'Ignoring category {cat!r} '
+                'as it’s in `settings.categories_to_ignore`.'
+            )
     asso_names = []
     asso_matrix = []
     for ipred_group, pred_group in enumerate(
@@ -560,6 +585,10 @@ def unique_categories(categories):
     categories = np.array(natsorted(categories, key=lambda v: v.upper()))
     return categories
 
+# --------------------------------------------------------------------------------
+# Other stuff
+# --------------------------------------------------------------------------------
+
 
 def fill_in_datakeys(example_parameters, dexdata):
     """Update the 'examples dictionary' _examples.example_parameters.
@@ -583,6 +612,15 @@ def fill_in_datakeys(example_parameters, dexdata):
 # backwards compat... remove this in the future
 def sanitize_anndata(adata):
     adata._sanitize()
+
+
+def view_to_actual(adata):
+    if adata.isview:
+        warnings.warn(
+            "Revieved a view of an AnnData. Making a copy.",
+            stacklevel=2
+        )
+        adata._init_as_actual(adata.copy())
 
 
 def moving_average(a, n):
@@ -708,9 +746,10 @@ def select_groups(adata, groups_order_subset='all', key='groups'):
                 np.in1d(np.arange(len(adata.obs[key].cat.categories)).astype(str),
                                           np.array(groups_order_subset)))[0]
         if len(groups_ids) == 0:
-            logg.m(np.array(groups_order_subset),
-                   'invalid! specify valid groups_order (or indices) one of',
-                   adata.obs[key].cat.categories)
+            logg.debug(
+                f'{np.array(groups_order_subset)} invalid! specify valid '
+                f'groups_order (or indices) from {adata.obs[key].cat.categories}',
+            )
             from sys import exit
             exit(0)
         groups_masks = groups_masks[groups_ids]
@@ -841,11 +880,13 @@ def subsample(X, subsample=1, seed=0):
         rows = np.arange(0, X.shape[0], subsample, dtype=int)
         n = rows.size
         Xsampled = np.array(X[rows])
-    if seed > 0:
+    else:
+        if seed < 0:
+            raise ValueError(f'Invalid seed value < 0: {seed}')
         n = int(X.shape[0]/subsample)
         np.random.seed(seed)
         Xsampled, rows = subsample_n(X, n=n)
-    logg.m('... subsampled to', n, 'of', X.shape[0], 'data points')
+    logg.debug(f'... subsampled to {n} of {X.shape[0]} data points')
     return Xsampled, rows
 
 
@@ -875,18 +916,11 @@ def subsample_n(X, n=0, seed=0):
     return Xsampled, rows
 
 
-def check_presence_download(filename, backup_url):
+def check_presence_download(filename: Path, backup_url):
     """Check if file is present otherwise download."""
-    import os
-    if not os.path.exists(filename):
-        from .readwrite import download_progress
-        dr = os.path.dirname(filename)
-        try:
-            os.makedirs(dr)
-        except FileExistsError:
-            pass  # ignore if dir already exists
-        from urllib.request import urlretrieve
-        urlretrieve(backup_url, filename, reporthook=download_progress)
+    if not filename.is_file():
+        from .readwrite import download
+        download(backup_url, filename)
 
 
 def hierarch_cluster(M):

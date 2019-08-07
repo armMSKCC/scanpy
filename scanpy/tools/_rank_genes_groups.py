@@ -9,7 +9,6 @@ from scipy.sparse import issparse
 
 from .. import utils
 from .. import logging as logg
-from ..logging import _settings_verbosity_greater_or_equal_than
 from ..preprocessing._simple import _get_mean_var
 
 
@@ -25,7 +24,6 @@ def rank_genes_groups(
     copy=False,
     method='t-test_overestim_var',
     corr_method='benjamini-hochberg',
-    log_transformed=True,
     **kwds
 ):
     """Rank genes for characterizing groups.
@@ -69,21 +67,21 @@ def rank_genes_groups(
 
     Returns
     -------
-    names : structured `np.ndarray` (`.uns['rank_genes_groups']`)
+    **names** : structured `np.ndarray` (`.uns['rank_genes_groups']`)
         Structured array to be indexed by group id storing the gene
         names. Ordered according to scores.
-    scores : structured `np.ndarray` (`.uns['rank_genes_groups']`)
+    **scores** : structured `np.ndarray` (`.uns['rank_genes_groups']`)
         Structured array to be indexed by group id storing the z-score
         underlying the computation of a p-value for each gene for each
         group. Ordered according to scores.
-    logfoldchanges : structured `np.ndarray` (`.uns['rank_genes_groups']`)
+    **logfoldchanges** : structured `np.ndarray` (`.uns['rank_genes_groups']`)
         Structured array to be indexed by group id storing the log2
         fold change for each gene for each group. Ordered according to
         scores. Only provided if method is 't-test' like.
         Note: this is an approximation calculated from mean-log values.
-    pvals : structured `np.ndarray` (`.uns['rank_genes_groups']`)
+    **pvals** : structured `np.ndarray` (`.uns['rank_genes_groups']`)
         p-values.
-    pvals_adj : structured `np.ndarray` (`.uns['rank_genes_groups']`)
+    **pvals_adj** : structured `np.ndarray` (`.uns['rank_genes_groups']`)
         Corrected p-values.
 
     Notes
@@ -102,7 +100,7 @@ def rank_genes_groups(
     if 'only_positive' in kwds:
         rankby_abs = not kwds.pop('only_positive')  # backwards compat
 
-    logg.info('ranking genes', r=True)
+    start = logg.info('ranking genes')
     avail_methods = {'t-test', 't-test_overestim_var', 'wilcoxon', 'logreg'}
     if method not in avail_methods:
         raise ValueError('Method must be one of {}.'.format(avail_methods))
@@ -159,8 +157,8 @@ def rank_genes_groups(
     ns = np.zeros(n_groups, dtype=int)
     for imask, mask in enumerate(groups_masks):
         ns[imask] = np.where(mask)[0].size
-    logg.msg('consider \'{}\' groups:'.format(groupby), groups_order, v=4)
-    logg.msg('with sizes:', ns, v=4)
+    logg.debug(f'consider {groupby!r} groups:')
+    logg.debug(f'with sizes: {ns}')
     if reference != 'rest':
         ireference = np.where(groups_order == reference)[0][0]
     reference_indices = np.arange(adata_comp.n_vars, dtype=int)
@@ -189,29 +187,30 @@ def rank_genes_groups(
             else:
                 if igroup == ireference: continue
                 else: mask_rest = groups_masks[ireference]
+            mean_group, var_group = means[igroup], vars[igroup]
             mean_rest, var_rest = _get_mean_var(X[mask_rest])
+
             ns_group = ns[igroup]  # number of observations in group
             if method == 't-test': ns_rest = np.where(mask_rest)[0].size
             elif method == 't-test_overestim_var': ns_rest = ns[igroup]  # hack for overestimating the variance for small groups
             else: raise ValueError('Method does not exist.')
 
-            denominator = np.sqrt(vars[igroup]/ns_group + var_rest/ns_rest)
-            denominator[np.flatnonzero(denominator == 0)] = np.nan
-            scores = (means[igroup] - mean_rest) / denominator #Welch t-test
-            scores[np.isnan(scores)] = 0
-            # Fold change
-            foldchanges = (np.expm1(means[igroup]) + 1e-9) / (np.expm1(mean_rest) + 1e-9) #add small value to remove 0's
+            # TODO: Come up with better solution. Mask unexpressed genes?
+            # See https://github.com/scipy/scipy/issues/10269
+            with np.errstate(invalid="ignore"):
+                scores, pvals = stats.ttest_ind_from_stats(
+                    mean1=mean_group, std1=np.sqrt(var_group), nobs1=ns_group,
+                    mean2=mean_rest,  std2=np.sqrt(var_rest),  nobs2=ns_rest,
+                    equal_var=False  # Welch's
+                )
 
-            #Get p-values
-            denominator_dof = (np.square(vars[igroup]) / (np.square(ns_group)*(ns_group-1))) + (
-                (np.square(var_rest) / (np.square(ns_rest) * (ns_rest - 1))))
-            denominator_dof[np.flatnonzero(denominator_dof == 0)] = np.nan
-            dof = np.square(vars[igroup]/ns_group + var_rest/ns_rest) / denominator_dof # dof calculation for Welch t-test
-            dof[np.isnan(dof)] = 0
-            pvals = stats.t.sf(abs(scores), dof)*2 # *2 because of two-tailed t-test
+            # Fold change
+            foldchanges = (np.expm1(mean_group) + 1e-9) / (np.expm1(mean_rest) + 1e-9)  # add small value to remove 0's
+
+            scores[np.isnan(scores)] = 0  # I think it's only nan when means are the same and vars are 0
+            pvals[np.isnan(pvals)] = 1  # This also has to happen for Benjamini Hochberg
 
             if corr_method == 'benjamini-hochberg':
-                pvals[np.isnan(pvals)] = 1  # set Nan values to 1 to properly convert using Benhjamini Hochberg
                 _, pvals_adj, _, _ = multipletests(pvals, alpha=0.05, method='fdr_bh')
             elif corr_method == 'bonferroni':
                 pvals_adj = np.minimum(pvals * n_genes, 1.0)
@@ -411,16 +410,22 @@ def rank_genes_groups(
         adata.uns[key_added]['pvals_adj'] = np.rec.fromarrays(
             [n for n in rankings_gene_pvals_adj],
             dtype=[(rn, 'float64') for rn in groups_order_save])
-    logg.info('    finished', time=True, end=' ' if _settings_verbosity_greater_or_equal_than(3) else '\n')
-    logg.hint(
-        'added to `.uns[\'{}\']`\n'
-        '    \'names\', sorted np.recarray to be indexed by group ids\n'
-        '    \'scores\', sorted np.recarray to be indexed by group ids\n'
-        .format(key_added)
-        + ('    \'logfoldchanges\', sorted np.recarray to be indexed by group ids\n'
-           '    \'pvals\', sorted np.recarray to be indexed by group ids\n'
-           '    \'pvals_adj\', sorted np.recarray to be indexed by group ids'
-           if method in {'t-test', 't-test_overestim_var', 'wilcoxon'} else ''))
+    logg.info(
+        '    finished',
+        time=start,
+        deep=(
+            f'added to `.uns[{key_added!r}]`\n'
+            "    'names', sorted np.recarray to be indexed by group ids\n"
+            "    'scores', sorted np.recarray to be indexed by group ids\n"
+            + (
+                "    'logfoldchanges', sorted np.recarray to be indexed by group ids\n"
+                "    'pvals', sorted np.recarray to be indexed by group ids\n"
+                "    'pvals_adj', sorted np.recarray to be indexed by group ids"
+                if method in {'t-test', 't-test_overestim_var', 'wilcoxon'} else
+                ''
+            )
+        ),
+    )
     return adata if copy else None
 
 
@@ -428,15 +433,14 @@ def filter_rank_genes_groups(adata, key=None, groupby=None, use_raw=True, log=Tr
                              key_added='rank_genes_groups_filtered',
                              min_in_group_fraction=0.25, min_fold_change=2,
                              max_out_group_fraction=0.5):
-    """
-    Uses the results of :ref:`scanpy.tl.rank_genes_groups`, to filter out genes
-    based on fold change and fraction of genes expressing the gene within and outside the
-    `groupby` categories.
+    """Filters out genes based on fold change and fraction of genes expressing the gene within and outside the `groupby` categories.
 
-    Results are stored in adata.uns[key_added] (default: 'rank_genes_groups_filtered')
+    See :func:`~scanpy.tl.rank_genes_groups`.
+
+    Results are stored in `adata.uns[key_added]` (default: 'rank_genes_groups_filtered').
 
     To preserve the original structure of adata.uns['rank_genes_groups'], filtered genes
-    are set to `nan`.
+    are set to `NaN`.
 
     Parameters
     ----------
@@ -452,7 +456,7 @@ def filter_rank_genes_groups(adata, key=None, groupby=None, use_raw=True, log=Tr
 
     Returns
     -------
-    Same output as :ref:`scanpy.tl.rank_genes_groups` but with filtered genes names set to
+    Same output as :func:`scanpy.tl.rank_genes_groups` but with filtered genes names set to
     `nan`
 
     Examples
@@ -460,11 +464,9 @@ def filter_rank_genes_groups(adata, key=None, groupby=None, use_raw=True, log=Tr
     >>> adata = sc.datasets.pbmc68k_reduced()
     >>> sc.tl.rank_genes_groups(adata, 'bulk_labels', method='wilcoxon')
     >>> sc.tl.filter_rank_genes_groups(adata, min_fold_change=3)
-
-    # visualize results
+    >>> # visualize results
     >>> sc.pl.rank_genes_groups(adata, key='rank_genes_groups_filtered')
-
-    # visualize results using dotplot
+    >>> # visualize results using dotplot
     >>> sc.pl.rank_genes_groups_dotplot(adata, key='rank_genes_groups_filtered')
     """
     if key is None:
@@ -481,9 +483,11 @@ def filter_rank_genes_groups(adata, key=None, groupby=None, use_raw=True, log=Tr
     fold_change_matrix = pd.DataFrame(np.zeros(gene_names.shape), columns=gene_names.columns, index=gene_names.index)
     fraction_out_cluster_matrix = pd.DataFrame(np.zeros(gene_names.shape), columns=gene_names.columns,
                                                index=gene_names.index)
-    logg.info("Filtering genes using: min_in_group_fraction: {} "
-              "min_fold_change: {}, max_out_group_fraction: {}".format(min_in_group_fraction, min_fold_change,
-                                                                       max_out_group_fraction))
+    logg.info(
+        f"Filtering genes using: "
+        f"min_in_group_fraction: {min_in_group_fraction} "
+        f"min_fold_change: {min_fold_change}, "
+        f"max_out_group_fraction: {max_out_group_fraction}")
     from ..plotting._anndata import _prepare_dataframe
     for cluster in gene_names.columns:
         # iterate per column
