@@ -20,10 +20,11 @@ def rank_genes_groups_df(
     pval_cutoff: Optional[float] = None,
     log2fc_min: Optional[float] = None,
     log2fc_max: Optional[float] = None,
-    gene_symbols: Optional[str] = None
+    gene_symbols: Optional[str] = None,
 ) -> pd.DataFrame:
-    """
-    :func:`scanpy.tl.rank_genes_groups` results in the form of a :class:`pd.DataFrame`.
+    """\
+    :func:`scanpy.tl.rank_genes_groups` results in the form of a
+    :class:`~pandas.DataFrame`.
 
     Params
     ------
@@ -46,13 +47,14 @@ def rank_genes_groups_df(
 
     Example
     -------
+    >>> import scanpy as sc
     >>> pbmc = sc.datasets.pbmc68k_reduced()
     >>> sc.tl.rank_genes_groups(pbmc, groupby="louvain", use_raw=True, n_genes=pbmc.shape[1])
     >>> dedf = sc.get.rank_genes_groups_df(pbmc, group="0")
     """
     d = pd.DataFrame()
     for k in ['scores', 'names', 'logfoldchanges', 'pvals', 'pvals_adj']:
-        d[k] = adata.uns["rank_genes_groups"][k][group]
+        d[k] = adata.uns[key][k][group]
     if pval_cutoff is not None:
         d = d[d["pvals_adj"] < pval_cutoff]
     if log2fc_min is not None:
@@ -71,7 +73,7 @@ def obs_df(
     *,
     layer: str = None,
     gene_symbols: str = None,
-    use_raw: bool = False
+    use_raw: bool = False,
 ) -> pd.DataFrame:
     """\
     Return values for observations in adata.

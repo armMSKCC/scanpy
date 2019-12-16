@@ -1,12 +1,13 @@
-from typing import Optional, Tuple, Sequence, Type
+from typing import Optional, Tuple, Sequence, Type, Union
 
 import numpy as np
 import pandas as pd
 from natsort import natsorted
 from anndata import AnnData
+from numpy.random.mtrand import RandomState
 from scipy import sparse
 
-from .. import utils
+from .. import _utils
 from .. import logging as logg
 
 from ._utils_clustering import rename_groups, restrict_adjacency
@@ -23,23 +24,25 @@ def leiden(
     resolution: float = 1,
     *,
     restrict_to: Optional[Tuple[str, Sequence[str]]] = None,
-    random_state: int = 0,
-    key_added: Optional[str] = 'leiden',
+    random_state: Optional[Union[int, RandomState]] = 0,
+    key_added: str = 'leiden',
     adjacency: Optional[sparse.spmatrix] = None,
     directed: bool = True,
     use_weights: bool = True,
     n_iterations: int = -1,
     partition_type: Optional[Type[MutableVertexPartition]] = None,
     copy: bool = False,
-    **partition_kwargs
-):
-    """Cluster cells into subgroups [Traag18]_.
+    **partition_kwargs,
+) -> Optional[AnnData]:
+    """\
+    Cluster cells into subgroups [Traag18]_.
 
-    Cluster cells using the Leiden algorithm [Traag18]_, an improved version of the
-    Louvain algorithm [Blondel08]_. The Louvain algorithm has been proposed for single-cell
-    analysis by [Levine15]_.
+    Cluster cells using the Leiden algorithm [Traag18]_,
+    an improved version of the Louvain algorithm [Blondel08]_.
+    It has been proposed for single-cell analysis by [Levine15]_.
 
-    This requires having ran :func:`~scanpy.pp.neighbors` or :func:`~scanpy.external.pp.bbknn` first.
+    This requires having ran :func:`~scanpy.pp.neighbors` or
+    :func:`~scanpy.external.pp.bbknn` first.
 
     Parameters
     ----------
@@ -47,7 +50,8 @@ def leiden(
         The annotated data matrix.
     resolution
         A parameter value controlling the coarseness of the clustering.
-        Higher values lead to more clusters. Set to `None` if overriding `partition_type`
+        Higher values lead to more clusters.
+        Set to `None` if overriding `partition_type`
         to one that doesn’t accept a `resolution_parameter`.
     random_state
         Change the initialization of the optimization.
@@ -55,7 +59,7 @@ def leiden(
         Restrict the clustering to the categories within the key for sample
         annotation, tuple needs to contain `(obs_key, list_of_categories)`.
     key_added
-        `adata.obs` key under which to add the cluster labels. (default: `'leiden'`)
+        `adata.obs` key under which to add the cluster labels.
     adjacency
         Sparse adjacency matrix of the graph, defaults to
         `adata.uns['neighbors']['connectivities']`.
@@ -69,8 +73,10 @@ def leiden(
         Positive values above 2 define the total number of iterations to perform,
         -1 has the algorithm run until it reaches its optimal clustering.
     partition_type
-        Type of partition to use. Defaults to :class:`~leidenalg.RBConfigurationVertexPartition`.
-        For the available options, consult the documentation for :func:`~leidenalg.find_partition`.
+        Type of partition to use.
+        Defaults to :class:`~leidenalg.RBConfigurationVertexPartition`.
+        For the available options, consult the documentation for
+        :func:`~leidenalg.find_partition`.
     copy
         Whether to copy `adata` or modify it inplace.
     **partition_kwargs
@@ -80,21 +86,29 @@ def leiden(
     Returns
     -------
     `adata.obs[key_added]`
-        Array of dim (number of samples) that stores the subgroup id (`'0'`, `'1'`, ...) for each cell.
+        Array of dim (number of samples) that stores the subgroup id
+        (`'0'`, `'1'`, ...) for each cell.
     `adata.uns['leiden']['params']`
-        A dict with the values for the parameters `resolution`, `random_state`, and `n_iterations`.
+        A dict with the values for the parameters `resolution`, `random_state`,
+        and `n_iterations`.
     """
     try:
         import leidenalg
     except ImportError:
-        raise ImportError('Please install the leiden algorithm: `pip3 install leidenalg`.')
+        raise ImportError(
+            'Please install the leiden algorithm: `pip3 install leidenalg`.'
+        )
+    partition_kwargs = dict(partition_kwargs)
 
     start = logg.info('running Leiden clustering')
     adata = adata.copy() if copy else adata
     # are we clustering a user-provided graph or the default AnnData one?
     if adjacency is None:
         if 'neighbors' not in adata.uns:
-            raise ValueError('You need to run `pp.neighbors` first to compute a neighborhood graph.')
+            raise ValueError(
+                'You need to run `pp.neighbors` first '
+                'to compute a neighborhood graph.'
+            )
         adjacency = adata.uns['neighbors']['connectivities']
     if restrict_to is not None:
         restrict_key, restrict_categories = restrict_to
@@ -102,18 +116,17 @@ def leiden(
             adata,
             restrict_key,
             restrict_categories,
-            adjacency
+            adjacency,
         )
     # convert it to igraph
-    g = utils.get_igraph_from_adjacency(adjacency, directed=directed)
+    g = _utils.get_igraph_from_adjacency(adjacency, directed=directed)
     # flip to the default partition type if not overriden by the user
     if partition_type is None:
         partition_type = leidenalg.RBConfigurationVertexPartition
-    # prepare find_partition arguments as a dictionary, appending to whatever the user provided
-    # it needs to be this way as this allows for the accounting of a None resolution
+    # Prepare find_partition arguments as a dictionary,
+    # appending to whatever the user provided. It needs to be this way
+    # as this allows for the accounting of a None resolution
     # (in the case of a partition variant that doesn't take it on input)
-    if partition_kwargs is None:
-        partition_kwargs = {}
     if use_weights:
         partition_kwargs['weights'] = np.array(g.es['weight']).astype(np.float64)
     partition_kwargs['n_iterations'] = n_iterations
@@ -133,7 +146,7 @@ def leiden(
             restrict_key,
             restrict_categories,
             restrict_indices,
-            groups
+            groups,
         )
     adata.obs[key_added] = pd.Categorical(
         values=groups.astype('U'),

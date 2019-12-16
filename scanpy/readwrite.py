@@ -1,7 +1,6 @@
 """Reading and Writing
 """
-
-import time
+from enum import Enum
 from pathlib import Path, PurePath
 from typing import Union, Dict, Optional, Tuple, BinaryIO
 
@@ -17,6 +16,7 @@ from anndata import (
 from anndata import read as read_h5ad
 
 from ._settings import settings
+from ._compat import Literal
 from . import logging as logg
 
 # .gz and .bz2 suffixes are also allowed for text formats
@@ -32,6 +32,12 @@ avail_exts = {
 """Available file formats for reading data. """
 
 
+class Empty(Enum):
+    token = 0
+
+_empty = Empty.token
+
+
 # --------------------------------------------------------------------------------
 # Reading and Writing data files and AnnData objects
 # --------------------------------------------------------------------------------
@@ -39,13 +45,14 @@ avail_exts = {
 
 def read(
     filename: Union[Path, str],
-    backed: Optional[str] = None,
+    backed: Optional[Literal['r', 'r+']] = None,
     sheet: Optional[str] = None,
     ext: Optional[str] = None,
     delimiter: Optional[str] = None,
     first_column_names: bool = False,
     backup_url: Optional[str] = None,
     cache: bool = False,
+    cache_compression: Union[Literal['gzip', 'lzf'], None, Empty] = _empty,
     **kwargs,
 ) -> AnnData:
     """\
@@ -61,7 +68,7 @@ def read(
         generating a filename via ``sc.settings.writedir / (filename +
         sc.settings.file_format_data)``.  This is the same behavior as in
         ``sc.read(filename, ...)``.
-    backed : {``None``, ``'r'``, ``'r+'``}
+    backed
         If ``'r'``, load :class:`~anndata.AnnData` in ``backed`` mode instead
         of fully loading it into memory (`memory` mode). If you want to modify
         backed attributes of the AnnData object, you need to choose ``'r+'``.
@@ -81,9 +88,12 @@ def read(
     backup_url
         Retrieve the file from an URL if not present on disk.
     cache
-        If ``False``, read from source, if ``True``, read from fast 'h5ad' cache.
+        If `False`, read from source, if `True`, read from fast 'h5ad' cache.
+    cache_compression
+        See the h5py :ref:`dataset_compression`.
+        (Default: `settings.cache_compression`)
     kwargs
-        Parameters passed to :func:`~anndata.readwrite.read_loom`.
+        Parameters passed to :func:`~anndata.read_loom`.
 
     Returns
     -------
@@ -92,9 +102,16 @@ def read(
     filename = Path(filename)  # allow passing strings
     if is_valid_filename(filename):
         return _read(
-            filename, backed=backed, sheet=sheet, ext=ext,
-            delimiter=delimiter, first_column_names=first_column_names,
-            backup_url=backup_url, cache=cache, **kwargs,
+            filename,
+            backed=backed,
+            sheet=sheet,
+            ext=ext,
+            delimiter=delimiter,
+            first_column_names=first_column_names,
+            backup_url=backup_url,
+            cache=cache,
+            cache_compression=cache_compression,
+            **kwargs,
         )
     # generate filename and read to dict
     filekey = str(filename)
@@ -244,9 +261,10 @@ def _read_v3_10x_h5(filename, *, start=None):
 
 def read_10x_mtx(
     path: Union[Path, str],
-    var_names: str = 'gene_symbols',
+    var_names: Literal['gene_symbols', 'gene_ids'] = 'gene_symbols',
     make_unique: bool = True,
     cache: bool = False,
+    cache_compression: Union[Literal['gzip', 'lzf'], None, Empty] = _empty,
     gex_only: bool = True,
 ) -> AnnData:
     """\
@@ -257,13 +275,16 @@ def read_10x_mtx(
     path
         Path to directory for `.mtx` and `.tsv` files,
         e.g. './filtered_gene_bc_matrices/hg19/'.
-    var_names : {'gene_symbols', 'gene_ids'} (default: 'gene_symbols')
+    var_names
         The variables index.
     make_unique
         Whether to make the variables index unique by appending '-1',
         '-2' etc. or not.
     cache
         If `False`, read from source, if `True`, read from fast 'h5ad' cache.
+    cache_compression
+        See the h5py :ref:`dataset_compression`.
+        (Default: `settings.cache_compression`)
     gex_only
         Only keep 'Gene Expression' data and ignore other feature types,
         e.g. 'Antibody Capture', 'CRISPR Guide Capture', or 'Custom'
@@ -280,6 +301,7 @@ def read_10x_mtx(
         var_names=var_names,
         make_unique=make_unique,
         cache=cache,
+        cache_compression=cache_compression,
     )
     if genefile_exists or not gex_only:
         return adata
@@ -288,12 +310,22 @@ def read_10x_mtx(
         return adata[:, gex_rows]
 
 
-def _read_legacy_10x_mtx(path, var_names='gene_symbols', make_unique=True, cache=False):
+def _read_legacy_10x_mtx(
+    path,
+    var_names='gene_symbols',
+    make_unique=True,
+    cache=False,
+    cache_compression=_empty,
+):
     """
     Read mex from output from Cell Ranger v2 or earlier versions
     """
     path = Path(path)
-    adata = read(path / 'matrix.mtx', cache=cache).T  # transpose the data
+    adata = read(
+        path / 'matrix.mtx',
+        cache=cache,
+        cache_compression=cache_compression,
+    ).T  # transpose the data
     genes = pd.read_csv(path / 'genes.tsv', header=None, sep='\t')
     if var_names == 'gene_symbols':
         var_names = genes[1]
@@ -310,12 +342,22 @@ def _read_legacy_10x_mtx(path, var_names='gene_symbols', make_unique=True, cache
     return adata
 
 
-def _read_v3_10x_mtx(path, var_names='gene_symbols', make_unique=True, cache=False):
+def _read_v3_10x_mtx(
+    path,
+    var_names='gene_symbols',
+    make_unique=True,
+    cache=False,
+    cache_compression=_empty,
+):
     """
     Read mex from output from Cell Ranger v3 or later versions
     """
     path = Path(path)
-    adata = read(path / 'matrix.mtx.gz', cache=cache).T  # transpose the data
+    adata = read(
+        path / 'matrix.mtx.gz',
+        cache=cache,
+        cache_compression=cache_compression
+    ).T  # transpose the data
     genes = pd.read_csv(path / 'features.tsv.gz', header=None, sep='\t')
     if var_names == 'gene_symbols':
         var_names = genes[1]
@@ -336,8 +378,8 @@ def _read_v3_10x_mtx(path, var_names='gene_symbols', make_unique=True, cache=Fal
 def write(
     filename: Union[str, Path],
     adata: AnnData,
-    ext: Optional[str] = None,
-    compression: str = 'gzip',
+    ext: Optional[Literal['h5', 'csv', 'txt', 'npz']] = None,
+    compression: Optional[Literal['gzip', 'lzf']] = 'gzip',
     compression_opts: Optional[int] = None,
 ):
     """\
@@ -348,14 +390,14 @@ def write(
     filename
         If the filename has no file extension, it is interpreted as a key for
         generating a filename via `sc.settings.writedir / (filename +
-        sc.settings.file_format_data)`.  This is the same behavior as in
-        :func:`~scanpy.api.read`.
+        sc.settings.file_format_data)`. This is the same behavior as in
+        :func:`~scanpy.read`.
     adata
         Annotated data matrix.
-    ext : {`None`, `'h5'`, `'csv'`, `'txt'`, `'npz'`} (default: `None`)
+    ext
         File extension from wich to infer file format. If `None`, defaults to
         `sc.settings.file_format_data`.
-    compression : {`None`, 'gzip', 'lzf'} (default: `'gzip'`)
+    compression
         See http://docs.h5py.org/en/latest/high/dataset.html.
     compression_opts
         See http://docs.h5py.org/en/latest/high/dataset.html.
@@ -375,7 +417,7 @@ def write(
     else:
         key = filename
         ext = settings.file_format_data if ext is None else ext
-        filename = get_filename_from_key(key, ext)
+        filename = _get_filename_from_key(key, ext)
     if ext == 'csv':
         adata.write_csvs(filename)
     else:
@@ -441,27 +483,9 @@ def write_params(path: Union[Path, str], *args, **maps):
     with path.open('w') as f:
         for header, map in maps.items():
             if header is not None:
-                f.write('[{}]\n'.format(header))
+                f.write(f'[{header}]\n')
             for key, val in map.items():
-                f.write('{} = {}\n'.format(key, val))
-
-
-def get_params_from_list(params_list):
-    """Transform params list to dictionary.
-    """
-    params = {}
-    key = None
-    for param in params_list:
-        if '=' not in param:
-            if key is None or key not in params:
-                raise ValueError('Pass parameters like `key1=a key2=b c d key3=...`.')
-            if not isinstance(params[key], list):
-                params[key] = [params[key]]
-            params[key] += [param]
-        else:
-            key, val = param.split('=')
-            params[key] = convert_string(val)
-    return params
+                f.write(f'{key} = {val}\n')
 
 
 # -------------------------------------------------------------------------------
@@ -478,6 +502,7 @@ def _read(
     first_column_names=None,
     backup_url=None,
     cache=False,
+    cache_compression=None,
     suppress_cache_warning=False,
     **kwargs,
 ):
@@ -488,7 +513,7 @@ def _read(
         )
     else:
         ext = is_valid_filename(filename, return_ext=True)
-    is_present = check_datafile_present_and_download(
+    is_present = _check_datafile_present_and_download(
         filename,
         backup_url=backup_url,
     )
@@ -506,51 +531,53 @@ def _read(
         path_cache = path_cache.with_suffix('')
     if cache and path_cache.is_file():
         logg.info(f'... reading from cache file {path_cache}')
-        adata = read_h5ad(path_cache)
-    else:
-        if not is_present:
-            raise FileNotFoundError('Did not find file {}.'.format(filename))
-        logg.debug(f'reading {filename}')
-        if not cache and not suppress_cache_warning:
-            logg.hint(
-                'This might be very slow. Consider passing `cache=True`, '
-                'which enables much faster reading from a cache file.'
+        return read_h5ad(path_cache)
+
+    if not is_present:
+        raise FileNotFoundError(f'Did not find file {filename}.')
+    logg.debug(f'reading {filename}')
+    if not cache and not suppress_cache_warning:
+        logg.hint(
+            'This might be very slow. Consider passing `cache=True`, '
+            'which enables much faster reading from a cache file.'
+        )
+    # do the actual reading
+    if ext == 'xlsx' or ext == 'xls':
+        if sheet is None:
+            raise ValueError(
+                "Provide `sheet` parameter when reading '.xlsx' files."
             )
-        # do the actual reading
-        if ext == 'xlsx' or ext == 'xls':
-            if sheet is None:
-                raise ValueError(
-                    "Provide `sheet` parameter when reading '.xlsx' files."
-                )
-            else:
-                adata = read_excel(filename, sheet)
-        elif ext in {'mtx', 'mtx.gz'}:
-            adata = read_mtx(filename)
-        elif ext == 'csv':
-            adata = read_csv(filename, first_column_names=first_column_names)
-        elif ext in {'txt', 'tab', 'data', 'tsv'}:
-            if ext == 'data':
-                logg.hint(
-                    "... assuming '.data' means tab or white-space "
-                    'separated text file',
-                )
-                logg.hint('change this by passing `ext` to sc.read')
-            adata = read_text(filename, delimiter, first_column_names)
-        elif ext == 'soft.gz':
-            adata = _read_softgz(filename)
-        elif ext == 'loom':
-            adata = read_loom(filename=filename, **kwargs)
         else:
-            raise ValueError(f'Unknown extension {ext}.')
-        if cache:
-            logg.info(
-                f'... writing an {settings.file_format_data} '
-                'cache file to speedup reading next time'
+            adata = read_excel(filename, sheet)
+    elif ext in {'mtx', 'mtx.gz'}:
+        adata = read_mtx(filename)
+    elif ext == 'csv':
+        adata = read_csv(filename, first_column_names=first_column_names)
+    elif ext in {'txt', 'tab', 'data', 'tsv'}:
+        if ext == 'data':
+            logg.hint(
+                "... assuming '.data' means tab or white-space "
+                'separated text file',
             )
-            if not path_cache.parent.is_dir():
-                path_cache.parent.mkdir(parents=True)
-            # write for faster reading when calling the next time
-            adata.write(path_cache)
+            logg.hint('change this by passing `ext` to sc.read')
+        adata = read_text(filename, delimiter, first_column_names)
+    elif ext == 'soft.gz':
+        adata = _read_softgz(filename)
+    elif ext == 'loom':
+        adata = read_loom(filename=filename, **kwargs)
+    else:
+        raise ValueError(f'Unknown extension {ext}.')
+    if cache:
+        logg.info(
+            f'... writing an {settings.file_format_data} '
+            'cache file to speedup reading next time'
+        )
+        if cache_compression is _empty:
+            cache_compression = settings.cache_compression
+        if not path_cache.parent.is_dir():
+            path_cache.parent.mkdir(parents=True)
+        # write for faster reading when calling the next time
+        adata.write(path_cache, compression=cache_compression)
     return adata
 
 
@@ -706,17 +733,12 @@ def get_used_files():
     return set(filenames)
 
 
-def wait_until_file_unused(filename):
-    while filename in get_used_files():
-        time.sleep(1)
-
-
-def get_filename_from_key(key, ext=None) -> Path:
+def _get_filename_from_key(key, ext=None) -> Path:
     ext = settings.file_format_data if ext is None else ext
     return settings.writedir / f'{key}.{ext}'
 
 
-def download(url: str, path: Path):
+def _download(url: str, path: Path):
     from tqdm.auto import tqdm
     from urllib.request import urlretrieve
 
@@ -730,7 +752,7 @@ def download(url: str, path: Path):
         urlretrieve(url, str(path), reporthook=update_to)
 
 
-def check_datafile_present_and_download(path, backup_url=None):
+def _check_datafile_present_and_download(path, backup_url=None):
     """Check whether the file is present, otherwise download.
     """
     path = Path(path)
@@ -744,7 +766,7 @@ def check_datafile_present_and_download(path, backup_url=None):
         logg.info(f'creating directory {path.parent}/ for saving data')
         path.parent.mkdir(parents=True)
 
-    download(backup_url, path)
+    _download(backup_url, path)
     return True
 
 

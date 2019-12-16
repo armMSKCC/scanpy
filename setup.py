@@ -1,10 +1,10 @@
 import sys
-if sys.version_info < (3,):
+
+if sys.version_info < (3, 6):
     sys.exit('scanpy requires Python >= 3.6')
 from pathlib import Path
 
 from setuptools import setup, find_packages
-import versioneer
 
 
 try:
@@ -14,8 +14,8 @@ except ImportError:  # Deps not yet installed
 
 setup(
     name='scanpy',
-    version=versioneer.get_version(),
-    cmdclass=versioneer.get_cmdclass(),
+    use_scm_version=True,
+    setup_requires=['setuptools_scm'],
     description='Single-Cell Analysis in Python.',
     long_description=Path('README.rst').read_text('utf-8'),
     url='http://github.com/theislab/scanpy',
@@ -24,25 +24,33 @@ setup(
     license='BSD',
     python_requires='>=3.6',
     install_requires=[
-        l.strip() for l in
-        Path('requirements.txt').read_text('utf-8').splitlines()
+        l.strip()
+        for l in Path('requirements.txt').read_text('utf-8').splitlines()
     ],
     extras_require=dict(
         louvain=['python-igraph', 'louvain>=0.6'],
         leiden=['python-igraph', 'leidenalg'],
         bbknn=['bbknn'],
-        doc=['sphinx', 'sphinx_rtd_theme', 'sphinx_autodoc_typehints', 'scanpydoc'],
-        test=['pytest>=4.4', 'dask[array]', 'fsspec', 'zappy', 'zarr'],
+        rapids=['cudf', 'cuml', 'cugraph'],
+        doc=[
+            'sphinx',
+            'sphinx_rtd_theme',
+            'sphinx_autodoc_typehints',
+            'scanpydoc>=0.4.3',
+            'typing_extensions; python_version < "3.8"',  # for `Literal`
+        ],
+        test=[
+            'pytest>=4.4',
+            'dask[array]',
+            'fsspec',
+            'zappy',
+            'zarr',
+            'black',
+            'profimp',
+        ],
     ),
     packages=find_packages(),
-    # `package_data` does NOT work for source distributions!!!
-    # you also need MANIFTEST.in
-    # https://stackoverflow.com/questions/7522250/how-to-include-package-data-with-setuptools-distribute
-    package_data={'': '*.txt'},
-    include_package_data=True,
-    entry_points=dict(
-        console_scripts=['scanpy=scanpy.cli:console_main'],
-    ),
+    entry_points=dict(console_scripts=['scanpy=scanpy.cli:console_main']),
     zip_safe=False,
     classifiers=[
         'Development Status :: 5 - Production/Stable',

@@ -1,19 +1,22 @@
-from collections import abc
+import collections.abc as cabc
 import numpy as np
 import pandas as pd
+from cycler import Cycler
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from scipy.sparse import issparse
 from matplotlib import pyplot as pl
 from matplotlib import rcParams, cm, colors
 from anndata import AnnData
-from typing import Union, Optional, List
+from typing import Union, Optional, List, Sequence, Iterable
 
-from .. import _utils as utils
-from ...utils import doc_params, sanitize_anndata
+from .._utils import savefig_or_show
+from ..._utils import _doc_params, sanitize_anndata, subsample
 from ... import logging as logg
-from .._anndata import scatter, ranking
+from .._anndata import ranking
 from .._utils import timeseries, timeseries_subplot, timeseries_as_heatmap
-from .._docs import doc_scatter_bulk, doc_show_save_ax, _doc_scatter_panels
-from .scatterplots import pca, plot_scatter
+from .._docs import doc_scatter_embedding, doc_show_save_ax, doc_vminmax, doc_panels
+from .scatterplots import pca, embedding, _panel_grid
 from matplotlib.colors import Colormap
 
 # ------------------------------------------------------------------------------
@@ -21,8 +24,8 @@ from matplotlib.colors import Colormap
 # ------------------------------------------------------------------------------
 
 
-@doc_params(scatter_bulk=doc_scatter_bulk, show_save_ax=doc_show_save_ax)
-def pca_overview(adata, **params):
+@_doc_params(scatter_bulk=doc_scatter_embedding, show_save_ax=doc_show_save_ax)
+def pca_overview(adata: AnnData, **params):
     """\
     Plot PCA results.
 
@@ -31,19 +34,20 @@ def pca_overview(adata, **params):
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    color : string or list of strings, optional (default: `None`)
+    color
         Keys for observation/cell annotation either as list `["ann1", "ann2"]` or
         string `"ann1,ann2,..."`.
-    use_raw : `bool`, optional (default: `True`)
+    use_raw
         Use `raw` attribute of `adata` if present.
     {scatter_bulk}
-    show : bool, optional (default: `None`)
+    show
          Show the plot, do not return axis.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {{'.pdf', '.png', '.svg'}}.
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {{`'.pdf'`, `'.png'`, `'.svg'`}}.
     """
     show = params['show'] if 'show' in params else None
     if 'show' in params: del params['show']
@@ -56,63 +60,94 @@ def pca_overview(adata, **params):
 pca_scatter = pca
 
 
-def pca_loadings(adata, components=None, show=None, save=None):
+def pca_loadings(
+    adata: AnnData,
+    components: Union[str, Sequence[int], None] = None,
+    include_lowest: bool = True,
+    show: Optional[bool] = None,
+    save: Union[str, bool, None] = None,
+):
     """\
     Rank genes according to contributions to PCs.
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    components : str or list of integers, optional
+    components
         For example, ``'1,2,3'`` means ``[1, 2, 3]``, first, second, third
         principal component.
-    show : bool, optional (default: `None`)
+    include_lowest
+        Show the genes with both highest and lowest loadings.
+    show
         Show the plot, do not return axis.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {'.pdf', '.png', '.svg'}.
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {`'.pdf'`, `'.png'`, `'.svg'`}.
     """
     if components is None: components = [1, 2, 3]
-    elif isinstance(components, str): components = components.split(',')
+    elif isinstance(components, str): components = [int(x) for x in components.split(',')]
     components = np.array(components) - 1
-    ranking(adata, 'varm', 'PCs', indices=components)
-    utils.savefig_or_show('pca_loadings', show=show, save=save)
+    if np.any(components < 0):
+        logg.error("Component indices must be greater than zero.")
+        return
+    ranking(
+        adata,
+        'varm',
+        'PCs',
+        indices=components,
+        include_lowest=include_lowest,
+    )
+    savefig_or_show('pca_loadings', show=show, save=save)
 
 
-def pca_variance_ratio(adata, n_pcs=30, log=False, show=None, save=None):
+def pca_variance_ratio(
+    adata: AnnData,
+    n_pcs: int = 30,
+    log: bool = False,
+    show: Optional[bool] = None,
+    save: Union[bool, str, None] = None,
+):
     """\
     Plot the variance ratio.
 
     Parameters
     ----------
-    n_pcs : `int`, optional (default: `30`)
+    n_pcs
          Number of PCs to show.
-    log : `bool`, optional (default: `False`)
+    log
          Plot on logarithmic scale..
-    show : `bool`, optional (default: `None`)
+    show
          Show the plot, do not return axis.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {'.pdf', '.png', '.svg'}.
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {`'.pdf'`, `'.png'`, `'.svg'`}.
     """
     ranking(adata, 'uns', 'variance_ratio', n_points=n_pcs, dictionary='pca', labels='PC', log=log)
-    utils.savefig_or_show('pca_variance_ratio', show=show, save=save)
+    savefig_or_show('pca_variance_ratio', show=show, save=save)
 
 
 # ------------------------------------------------------------------------------
-# Subgroup identification and ordering - clustering, pseudotime, branching
+# Subgroup identification and ordering – clustering, pseudotime, branching
 # and tree inference tools
 # ------------------------------------------------------------------------------
 
 
-def dpt_timeseries(adata, color_map=None, show=None, save=None, as_heatmap=True):
+def dpt_timeseries(
+    adata: AnnData,
+    color_map: Union[str, Colormap] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    as_heatmap: bool = True,
+):
     """\
     Heatmap of pseudotime series.
 
     Parameters
     ----------
-    as_heatmap : bool (default: False)
+    as_heatmap
         Plot the timeseries as heatmap.
     """
     if adata.n_vars > 100:
@@ -123,66 +158,94 @@ def dpt_timeseries(adata, color_map=None, show=None, save=None, as_heatmap=True)
     # only if number of genes is not too high
     if as_heatmap:
         # plot time series as heatmap, as in Haghverdi et al. (2016), Fig. 1d
-        timeseries_as_heatmap(adata.X[adata.obs['dpt_order_indices'].values],
-                              var_names=adata.var_names,
-                              highlightsX=adata.uns['dpt_changepoints'],
-                              color_map=color_map)
+        timeseries_as_heatmap(
+            adata.X[adata.obs['dpt_order_indices'].values],
+            var_names=adata.var_names,
+            highlights_x=adata.uns['dpt_changepoints'],
+            color_map=color_map,
+        )
     else:
         # plot time series as gene expression vs time
-        timeseries(adata.X[adata.obs['dpt_order_indices'].values],
-                   var_names=adata.var_names,
-                   highlightsX=adata.uns['dpt_changepoints'],
-                   xlim=[0, 1.3*adata.X.shape[0]])
+        timeseries(
+            adata.X[adata.obs['dpt_order_indices'].values],
+            var_names=adata.var_names,
+            highlights_x=adata.uns['dpt_changepoints'],
+            xlim=[0, 1.3*adata.X.shape[0]],
+        )
     pl.xlabel('dpt order')
-    utils.savefig_or_show('dpt_timeseries', save=save, show=show)
+    savefig_or_show('dpt_timeseries', save=save, show=show)
 
 
-def dpt_groups_pseudotime(adata, color_map=None, palette=None, show=None, save=None):
+def dpt_groups_pseudotime(
+    adata: AnnData,
+    color_map: Union[str, Colormap, None] = None,
+    palette: Union[Sequence[str], Cycler, None] = None,
+    show: Optional[bool] = None,
+    save: Union[bool, str, None] = None,
+):
     """Plot groups and pseudotime."""
-    pl.figure()
-    pl.subplot(211)
-    timeseries_subplot(adata.obs['dpt_groups'].cat.codes,
-                       time=adata.obs['dpt_order'].values,
-                       color=np.asarray(adata.obs['dpt_groups']),
-                       highlightsX=adata.uns['dpt_changepoints'],
-                       ylabel='dpt groups',
-                       yticks=(np.arange(len(adata.obs['dpt_groups'].cat.categories), dtype=int)
-                                     if len(adata.obs['dpt_groups'].cat.categories) < 5 else None),
-                       palette=palette)
-    pl.subplot(212)
-    timeseries_subplot(adata.obs['dpt_pseudotime'].values,
-                       time=adata.obs['dpt_order'].values,
-                       color=adata.obs['dpt_pseudotime'].values,
-                       xlabel='dpt order',
-                       highlightsX=adata.uns['dpt_changepoints'],
-                       ylabel='pseudotime',
-                       yticks=[0, 1],
-                       color_map=color_map)
-    utils.savefig_or_show('dpt_groups_pseudotime', save=save, show=show)
+    _, (ax_grp, ax_ord) = pl.subplots(2, 1)
+    timeseries_subplot(
+        adata.obs['dpt_groups'].cat.codes,
+        time=adata.obs['dpt_order'].values,
+        color=np.asarray(adata.obs['dpt_groups']),
+        highlights_x=adata.uns['dpt_changepoints'],
+        ylabel='dpt groups',
+        yticks=(
+            np.arange(len(adata.obs['dpt_groups'].cat.categories), dtype=int)
+            if len(adata.obs['dpt_groups'].cat.categories) < 5 else None
+        ),
+        palette=palette,
+        ax=ax_grp,
+    )
+    timeseries_subplot(
+        adata.obs['dpt_pseudotime'].values,
+        time=adata.obs['dpt_order'].values,
+        color=adata.obs['dpt_pseudotime'].values,
+        xlabel='dpt order',
+        highlights_x=adata.uns['dpt_changepoints'],
+        ylabel='pseudotime',
+        yticks=[0, 1],
+        color_map=color_map,
+        ax=ax_ord,
+    )
+    savefig_or_show('dpt_groups_pseudotime', save=save, show=show)
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups(adata, groups=None, n_genes=20, gene_symbols=None, key=None, fontsize=8,
-                      ncols=4, sharey=True, show=None, save=None, ax=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 20,
+    gene_symbols: Optional[str] = None,
+    key: Optional[str] = None,
+    fontsize: int = 8,
+    ncols: int = 4,
+    sharey: bool = True,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    ax: Optional[Axes] = None,
+    **kwds,
+):
     """\
     Plot ranking of genes.
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    gene_symbols : `str`
+    gene_symbols
         Key for field in `.var` that stores gene symbols if you do not want to
         use `.var_names`.
-    n_genes : `int`, optional (default: 20)
+    n_genes
         Number of genes to show.
-    fontsize : `int`, optional (default: 8)
+    fontsize
         Fontsize for gene names.
-    ncols : `int`, optional (default: 4)
+    ncols
         Number of panels shown per row.
-    sharey: `bool`, optional (default: True)
+    sharey
         Controls if the y-axis of each panels should be shared. But passing
         `sharey=False`, each panel has its own y-axis range.
     {show_save_ax}
@@ -258,30 +321,39 @@ def rank_genes_groups(adata, groups=None, n_genes=20, gene_symbols=None, key=Non
         ymax += 0.3*(ymax-ymin)
         ax.set_ylim(ymin, ymax)
 
-    writekey = ('rank_genes_groups_'
-                + str(adata.uns[key]['params']['groupby']))
-    utils.savefig_or_show(writekey, show=show, save=save)
+    writekey = f"rank_genes_groups_{adata.uns[key]['params']['groupby']}"
+    savefig_or_show(writekey, show=show, save=save)
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def _rank_genes_groups_plot(adata, plot_type='heatmap', groups=None,
-                            n_genes=10, groupby=None, key=None,
-                            show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def _rank_genes_groups_plot(
+    adata: AnnData,
+    plot_type: str = 'heatmap',
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: Optional[str] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
     Plot ranking of genes using the specified plot type
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.
+    key
+        Key used to store the ranking results in `adata.uns`.
     {show_save_ax}
     """
     if key is None:
@@ -337,200 +409,293 @@ def _rank_genes_groups_plot(adata, plot_type='heatmap', groups=None,
                    var_group_positions=group_positions, show=show, save=save, **kwds)
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups_heatmap(adata, groups=None, n_genes=10, groupby=None, key=None,
-                              show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups_heatmap(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: str = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
-    Plot ranking of genes using heatmap plot (see `scanpy.api.pl.heatmap`)
+    Plot ranking of genes using heatmap plot (see :func:`~scanpy.pl.heatmap`)
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.  It is expected that
         groupby is a categorical. If groupby is not a categorical observation,
-        it would be subdivided into `num_categories` (see `scanpy.api.pl.heatmap`).
-    key : `str`
+        it would be subdivided into `num_categories` (see :func:`~scanpy.pl.heatmap`).
+    key
         Key used to store the ranking results in `adata.uns`.
-    **kwds : keyword arguments
-        Are passed to `scanpy.api.pl.heatmap`.
+    **kwds
+        Are passed to :func:`~scanpy.pl.heatmap`.
     {show_save_ax}
     """
 
-    _rank_genes_groups_plot(adata, plot_type='heatmap', groups=groups, n_genes=n_genes,
-                            groupby=groupby, key=key, show=show, save=save, **kwds)
+    _rank_genes_groups_plot(
+        adata,
+        plot_type='heatmap',
+        groups=groups,
+        n_genes=n_genes,
+        groupby=groupby,
+        key=key,
+        show=show,
+        save=save,
+        **kwds,
+    )
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups_tracksplot(adata, groups=None, n_genes=10, groupby=None, key=None,
-                              show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups_tracksplot(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: Optional[str] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
-    Plot ranking of genes using heatmap plot (see `scanpy.api.pl.heatmap`)
+    Plot ranking of genes using heatmap plot (see :func:`~scanpy.pl.heatmap`)
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.  It is expected that
         groupby is a categorical. If groupby is not a categorical observation,
-        it would be subdivided into `num_categories` (see `scanpy.api.pl.heatmap`).
-    key : `str`
+        it would be subdivided into `num_categories` (see :func:`~scanpy.pl.heatmap`).
+    key
         Key used to store the ranking results in `adata.uns`.
-    **kwds : keyword arguments
-        Are passed to `scanpy.api.pl.tracksplot`.
+    **kwds
+        Are passed to :func:`~scanpy.pl.tracksplot`.
     {show_save_ax}
     """
 
-    _rank_genes_groups_plot(adata, plot_type='tracksplot', groups=groups, n_genes=n_genes,
-                            groupby=groupby, key=key, show=show, save=save, **kwds)
+    _rank_genes_groups_plot(
+        adata,
+        plot_type='tracksplot',
+        groups=groups,
+        n_genes=n_genes,
+        groupby=groupby,
+        key=key,
+        show=show,
+        save=save,
+        **kwds,
+    )
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups_dotplot(adata, groups=None, n_genes=10, groupby=None, key=None,
-                              show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups_dotplot(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: Optional[str] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
-    Plot ranking of genes using dotplot plot (see `scanpy.api.pl.dotplot`)
+    Plot ranking of genes using dotplot plot (see :func:`~scanpy.pl.dotplot`)
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.  It is expected that
         groupby is a categorical. If groupby is not a categorical observation,
-        it would be subdivided into `num_categories` (see `scanpy.api.pl.dotplot`).
-    key : `str`
+        it would be subdivided into `num_categories` (see :func:`~scanpy.pl.dotplot`).
+    key
         Key used to store the ranking results in `adata.uns`.
     {show_save_ax}
-    **kwds : keyword arguments
-        Are passed to `scanpy.api.pl.dotplot`.
+    **kwds
+        Are passed to :func:`~scanpy.pl.dotplot`.
     """
 
-    _rank_genes_groups_plot(adata, plot_type='dotplot', groups=groups, n_genes=n_genes,
-                            groupby=groupby, key=key, show=show, save=save, **kwds)
+    _rank_genes_groups_plot(
+        adata,
+        plot_type='dotplot',
+        groups=groups,
+        n_genes=n_genes,
+        groupby=groupby,
+        key=key,
+        show=show,
+        save=save,
+        **kwds,
+    )
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups_stacked_violin(adata, groups=None, n_genes=10, groupby=None, key=None,
-                                     show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups_stacked_violin(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: Optional[str] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
-    Plot ranking of genes using stacked_violin plot (see `scanpy.api.pl.stacked_violin`)
+    Plot ranking of genes using stacked_violin plot (see :func:`~scanpy.pl.stacked_violin`)
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.  It is expected that
         groupby is a categorical. If groupby is not a categorical observation,
-        it would be subdivided into `num_categories` (see `scanpy.api.pl.stacked_violin`).
-    key : `str`
+        it would be subdivided into `num_categories` (see :func:`~scanpy.pl.stacked_violin`).
+    key
         Key used to store the ranking results in `adata.uns`.
     {show_save_ax}
-    **kwds : keyword arguments
-        Are passed to `scanpy.api.pl.stacked_violin`.
+    **kwds
+        Are passed to :func:`~scanpy.pl.stacked_violin`.
     """
 
-    _rank_genes_groups_plot(adata, plot_type='stacked_violin', groups=groups, n_genes=n_genes,
-                            groupby=groupby, key=key, show=show, save=save, **kwds)
+    _rank_genes_groups_plot(
+        adata,
+        plot_type='stacked_violin',
+        groups=groups,
+        n_genes=n_genes,
+        groupby=groupby,
+        key=key,
+        show=show,
+        save=save,
+        **kwds,
+    )
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
-def rank_genes_groups_matrixplot(adata, groups=None, n_genes=10, groupby=None, key=None,
-                                 show=None, save=None, **kwds):
+@_doc_params(show_save_ax=doc_show_save_ax)
+def rank_genes_groups_matrixplot(
+    adata: AnnData,
+    groups: Union[str, Sequence[str]] = None,
+    n_genes: int = 10,
+    groupby: Optional[str] = None,
+    key: Optional[str] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+    **kwds,
+):
     """\
-    Plot ranking of genes using matrixplot plot (see `scanpy.api.pl.matrixplot`)
+    Plot ranking of genes using matrixplot plot (see :func:`~scanpy.pl.matrixplot`)
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : `str` or `list` of `str`
+    groups
         The groups for which to show the gene ranking.
-    n_genes : `int`, optional (default: 10)
+    n_genes
         Number of genes to show.
-    groupby : `str` or `None`, optional (default: `None`)
+    groupby
         The key of the observation grouping to consider. By default,
         the groupby is chosen from the rank genes groups parameter but
         other groupby options can be used.  It is expected that
         groupby is a categorical. If groupby is not a categorical observation,
-        it would be subdivided into `num_categories` (see `scanpy.api.pl.matrixplot`).
-    key : `str`
+        it would be subdivided into `num_categories` (see :func:`~scanpy.pl.matrixplot`).
+    key
         Key used to store the ranking results in `adata.uns`.
     {show_save_ax}
-    **kwds : keyword arguments
-        Are passed to `scanpy.api.pl.matrixplot`.
+    **kwds
+        Are passed to :func:`~scanpy.pl.matrixplot`.
     """
 
-    _rank_genes_groups_plot(adata, plot_type='matrixplot', groups=groups, n_genes=n_genes,
-                            groupby=groupby, key=key, show=show, save=save, **kwds)
+    _rank_genes_groups_plot(
+        adata,
+        plot_type='matrixplot',
+        groups=groups,
+        n_genes=n_genes,
+        groupby=groupby,
+        key=key,
+        show=show,
+        save=save,
+        **kwds,
+    )
 
 
-@doc_params(show_save_ax=doc_show_save_ax)
+@_doc_params(show_save_ax=doc_show_save_ax)
 def rank_genes_groups_violin(
-        adata, groups=None, n_genes=20,
-        gene_names=None, gene_symbols=None,
-        use_raw=None,
-        key=None,
-        split=True,
-        scale='width',
-        strip=True, jitter=True, size=1,
-        ax=None, show=None, save=None):
+    adata: AnnData,
+    groups: Optional[Sequence[str]] = None,
+    n_genes: int = 20,
+    gene_names: Optional[Iterable[str]] = None,
+    gene_symbols: Optional[str] = None,
+    use_raw: Optional[bool] = None,
+    key: Optional[str] = None,
+    split: bool = True,
+    scale: str = 'width',
+    strip: bool = True,
+    jitter: Union[int, float, bool] = True,
+    size: int = 1,
+    ax: Optional[Axes] = None,
+    show: Optional[bool] = None,
+    save: Optional[bool] = None,
+):
     """\
     Plot ranking of genes for all tested comparisons.
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`
+    adata
         Annotated data matrix.
-    groups : list of `str`, optional (default: `None`)
+    groups
         List of group names.
-    n_genes : `int`, optional (default: 20)
+    n_genes
         Number of genes to show. Is ignored if `gene_names` is passed.
-    gene_names : `None` or list of `str` (default: `None`)
+    gene_names
         List of genes to plot. Is only useful if interested in a custom gene list,
-        which is not the result of :func:`scanpy.api.tl.rank_genes_groups`.
-    gene_symbols : `str`, optional (default: `None`)
+        which is not the result of :func:`scanpy.tl.rank_genes_groups`.
+    gene_symbols
         Key for field in `.var` that stores gene symbols if you do not want to
         use `.var_names` displayed in the plot.
-    use_raw : `bool`, optional (default: `None`)
+    use_raw
         Use `raw` attribute of `adata` if present. Defaults to the value that
-        was used in :func:`~scanpy.api.tl.rank_genes_groups`.
-    split : `bool`, optional (default: `True`)
+        was used in :func:`~scanpy.tl.rank_genes_groups`.
+    split
         Whether to split the violins or not.
-    scale : `str`, optional (default: 'width')
-        See `seaborn.violinplot`.
-    strip : `bool`, optional (default: `True`)
+    scale
+        See :func:`~seaborn.violinplot`.
+    strip
         Show a strip plot on top of the violin plot.
-    jitter : `int`, `float`, `bool`, optional (default: `True`)
-        If set to 0, no points are drawn. See `seaborn.stripplot`.
-    size : `int`, optional (default: 1)
+    jitter
+        If set to 0, no points are drawn. See :func:`~seaborn.stripplot`.
+    size
         Size of the jitter points.
     {show_save_ax}
     """
@@ -585,67 +750,83 @@ def rank_genes_groups_violin(
         _ax.legend_.remove()
         _ax.set_ylabel('expression')
         _ax.set_xticklabels(new_gene_names, rotation='vertical')
-        writekey = ('rank_genes_groups_'
-                    + str(adata.uns[key]['params']['groupby'])
-                    + '_' + group_name)
-        utils.savefig_or_show(writekey, show=show, save=save)
+        writekey = (
+            f"rank_genes_groups_"
+            f"{adata.uns[key]['params']['groupby']}_"
+            f"{group_name}"
+        )
+        savefig_or_show(writekey, show=show, save=save)
         axs.append(_ax)
     if show == False: return axs
 
 
-def sim(adata, tmax_realization=None, as_heatmap=False, shuffle=False,
-        show=None, save=None):
+def sim(
+    adata,
+    tmax_realization: Optional[int] = None,
+    as_heatmap: bool = False,
+    shuffle: bool = False,
+    show: Optional[bool] = None,
+    save: Union[bool, str, None] = None,
+):
     """\
     Plot results of simulation.
 
     Parameters
     ----------
-    as_heatmap : bool (default: False)
-        Plot the timeseries as heatmap.
-    tmax_realization : int or None (default: False)
+    tmax_realization
         Number of observations in one realization of the time series. The data matrix
         adata.X consists in concatenated realizations.
-    shuffle : bool, optional (default: False)
+    as_heatmap
+        Plot the timeseries as heatmap.
+    shuffle
         Shuffle the data.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {{'.pdf', '.png', '.svg'}}.
-    show : bool, optional (default: `None`)
+    show
         Show the plot, do not return axis.
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {{`'.pdf'`, `'.png'`, `'.svg'`}}.
     """
-    from ... import utils as sc_utils
     if tmax_realization is not None: tmax = tmax_realization
     elif 'tmax_write' in adata.uns: tmax = adata.uns['tmax_write']
     else: tmax = adata.n_obs
     n_realizations = adata.n_obs/tmax
     if not shuffle:
         if not as_heatmap:
-            timeseries(adata.X,
-                       var_names=adata.var_names,
-                       xlim=[0, 1.25*adata.n_obs],
-                       highlightsX=np.arange(tmax, n_realizations*tmax, tmax),
-                       xlabel='realizations')
+            timeseries(
+                adata.X,
+                var_names=adata.var_names,
+                xlim=[0, 1.25*adata.n_obs],
+                highlights_x=np.arange(tmax, n_realizations*tmax, tmax),
+                xlabel='realizations',
+            )
         else:
             # plot time series as heatmap, as in Haghverdi et al. (2016), Fig. 1d
-            timeseries_as_heatmap(adata.X,
-                                  var_names=adata.var_names,
-                                  highlightsX=np.arange(tmax, n_realizations*tmax, tmax))
-        pl.xticks(np.arange(0, n_realizations*tmax, tmax),
-                  np.arange(n_realizations).astype(int) + 1)
-        utils.savefig_or_show('sim', save=save, show=show)
+            timeseries_as_heatmap(
+                adata.X,
+                var_names=adata.var_names,
+                highlights_x=np.arange(tmax, n_realizations*tmax, tmax),
+            )
+        pl.xticks(
+            np.arange(0, n_realizations*tmax, tmax),
+            np.arange(n_realizations).astype(int) + 1,
+        )
+        savefig_or_show('sim', save=save, show=show)
     else:
         # shuffled data
         X = adata.X
-        X, rows = sc_utils.subsample(X, seed=1)
-        timeseries(X,
-                   var_names=adata.var_names,
-                   xlim=[0, 1.25*adata.n_obs],
-                   highlightsX=np.arange(tmax, n_realizations*tmax, tmax),
-                   xlabel='index (arbitrary order)')
-        utils.savefig_or_show('sim_shuffled', save=save, show=show)
+        X, rows = subsample(X, seed=1)
+        timeseries(
+            X,
+            var_names=adata.var_names,
+            xlim=[0, 1.25*adata.n_obs],
+            highlights_x=np.arange(tmax, n_realizations*tmax, tmax),
+            xlabel='index (arbitrary order)',
+        )
+        savefig_or_show('sim_shuffled', save=save, show=show)
 
 
-@doc_params(show_save_ax=doc_show_save_ax, panels=_doc_scatter_panels)
+@_doc_params(vminmax=doc_vminmax, panels=doc_panels, show_save_ax=doc_show_save_ax)
 def embedding_density(
     adata: AnnData,
     basis: str,
@@ -660,10 +841,13 @@ def embedding_density(
     ncols: Optional[int] = 4,
     hspace: Optional[float] = 0.25,
     wspace: Optional[None] = None,
-    save: Union[bool, str, None] = None,
+    title: str = None,
     show: Optional[bool] = None,
-    **kwargs
-):
+    save: Union[bool, str, None] = None,
+    ax: Optional[Axes] = None,
+    return_fig: Optional[bool] = None,
+    **kwargs,
+) -> Union[Figure, Axes, None]:
     """\
     Plot the density of cells in an embedding (per condition)
 
@@ -694,15 +878,13 @@ def embedding_density(
         Dot size for background data points not in the `group`.
     fg_dotsize
         Dot size for foreground data points in the `group`.
-    vmax
-        Density that corresponds to color bar maximum.
-    vmin
-        Density that corresponds to color bar minimum.
+    {vminmax}
     {panels}
     {show_save_ax}
 
     Examples
     --------
+    >>> import scanpy as sc
     >>> adata = sc.datasets.pbmc68k_reduced()
     >>> sc.tl.umap(adata)
     >>> sc.tl.embedding_density(adata, basis='umap', groupby='phase')
@@ -711,8 +893,12 @@ def embedding_density(
     >>> sc.pl.embedding_density(adata, basis='umap', key='umap_density_phase')
 
     Plot selected categories
-    >>> sc.pl.embedding_density(adata, basis='umap', key='umap_density_phase',
-    ...                         group=['G1', 'S'])
+    >>> sc.pl.embedding_density(
+    ...     adata,
+    ...     basis='umap',
+    ...     key='umap_density_phase',
+    ...     group=['G1', 'S'],
+    ... )
     """
     sanitize_anndata(adata)
 
@@ -722,15 +908,17 @@ def embedding_density(
     if basis == 'fa':
         basis = 'draw_graph_fa'
 
-    if 'X_'+basis not in adata.obsm_keys():
-        raise ValueError('Cannot find the embedded representation `adata.obsm[X_{!r}]`. '
-                         'Compute the embedding first.'.format(basis))
+    if f'X_{basis}' not in adata.obsm_keys():
+        raise ValueError(
+            f'Cannot find the embedded representation `adata.obsm[X_{basis!r}]`. '
+            'Compute the embedding first.'
+        )
 
-    if key not in adata.obs:
-        raise ValueError('Please run `sc.tl.embedding_density()` first and specify the correct key.')
-
-    if key+'_params' not in adata.uns:
-        raise ValueError('Please run `sc.tl.embedding_density()` first and specify the correct key.')
+    if key not in adata.obs or f'{key}_params' not in adata.uns:
+        raise ValueError(
+            'Please run `sc.tl.embedding_density()` first '
+            'and specify the correct key.'
+        )
 
     if 'components' in kwargs:
         logg.warning(
@@ -739,8 +927,8 @@ def embedding_density(
         )
         del kwargs['components']
 
-    components = adata.uns[key+'_params']['components']
-    groupby = adata.uns[key+'_params']['covariate']
+    components = adata.uns[f'{key}_params']['components']
+    groupby = adata.uns[f'{key}_params']['covariate']
 
     # turn group into a list if needed
     if group == 'all':
@@ -751,15 +939,20 @@ def embedding_density(
     elif isinstance(group, str):
         group = [group]
 
-    if (group is None) and (groupby is not None):
-        raise ValueError('Densities were calculated over an `.obs` covariate. '
-                         'Please specify a group from this covariate to plot.')
+    if group is None and groupby is not None:
+        raise ValueError(
+            'Densities were calculated over an `.obs` covariate. '
+            'Please specify a group from this covariate to plot.'
+        )
 
-    if (group is not None) and (groupby is None):
-        logg.warning("value of 'group' is ignored because densities were not calculated for an `.obs` covariate.")
+    if group is not None and groupby is None:
+        logg.warning(
+            "value of 'group' is ignored because densities "
+            "were not calculated for an `.obs` covariate."
+        )
         group = None
 
-    if (np.min(adata.obs[key]) < 0) or (np.max(adata.obs[key]) > 1):
+    if np.min(adata.obs[key]) < 0 or np.max(adata.obs[key]) > 1:
         raise ValueError('Densities should be scaled between 0 and 1.')
 
     if wspace is None:
@@ -769,44 +962,40 @@ def embedding_density(
 
     # Make the color map
     if isinstance(color_map, str):
-        cmap = cm.get_cmap(color_map)
-    else:
-        cmap = color_map
+        color_map = cm.get_cmap(color_map)
 
     norm = colors.Normalize(vmin=vmin, vmax=vmax)
-    cmap.set_over('black')
-    cmap.set_under('lightgray')
+    color_map.set_over('black')
+    color_map.set_under('lightgray')
     # a name to store the density values is needed. To avoid
     # overwriting a user name a new random name is created
     while True:
-        density_col_name = '_tmp_embedding_density_column_{}_'.format(np.random.randint(1000, 10000))
+        col_id = np.random.randint(1000, 10000)
+        density_col_name = f'_tmp_embedding_density_column_{col_id}_'
         if density_col_name not in adata.obs.columns:
             break
 
-    # if group is set, then plot it using multiple panels (even if only one group is set)
-    if group is not None and isinstance(group, abc.Sequence):
-        from matplotlib import gridspec
-        # set up the figure
-        num_panels = len(group)
-        n_panels_x = min(ncols, num_panels)
-        n_panels_y = np.ceil(num_panels / n_panels_x).astype(int)
-        # each panel will have the size of rcParams['figure.figsize']
-        fig = pl.figure(figsize=(n_panels_x * rcParams['figure.figsize'][0] * (1 + wspace),
-                                 n_panels_y * rcParams['figure.figsize'][1]))
-        left = 0.2 / n_panels_x
-        bottom = 0.13 / n_panels_y
-        gs = gridspec.GridSpec(
-            nrows=n_panels_y, ncols=n_panels_x,
-            left=left, right=1 - (n_panels_x - 1) * left - 0.01 / n_panels_x,
-            bottom=bottom, top=1 - (n_panels_y - 1) * bottom - 0.1 / n_panels_y,
-            hspace=hspace, wspace=wspace,
-        )
+    # if group is set, then plot it using multiple panels
+    # (even if only one group is set)
+    if (
+        group is not None
+        and not isinstance(group, str)
+        and isinstance(group, cabc.Sequence)
+    ):
+        if ax is not None:
+            raise ValueError(
+                "Can only specify `ax` if no `group` sequence is given."
+            )
+        fig, gs = _panel_grid(hspace, wspace, ncols, len(group))
 
         axs = []
         for count, group_name in enumerate(group):
             if group_name not in adata.obs[groupby].cat.categories:
-                raise ValueError('Please specify a group from the `.obs` category over which the density '
-                                 'was calculated. Invalid group name: {}'.format(group_name))
+                raise ValueError(
+                    'Please specify a group from the `.obs` category '
+                    'over which the density was calculated. '
+                    f'Invalid group name: {group_name}'
+                )
 
             ax = pl.subplot(gs[count])
             # Define plotting data
@@ -817,13 +1006,17 @@ def embedding_density(
             adata.obs[density_col_name] = dens_values
             dot_sizes[group_mask] = np.ones(sum(group_mask)) * fg_dotsize
 
-            if 'title' not in kwargs:
-                title = group_name
+            if title is None:
+                _title = group_name
             else:
-                title = kwargs.pop('title')
-            ax=plot_scatter(adata, basis, components=components, color=density_col_name,
-                         color_map=cmap, norm=norm, size=dot_sizes, vmax=vmax,
-                         vmin=vmin, save=False, title=title, ax=ax, show=False, **kwargs)
+                _title = title
+
+            ax = embedding(
+                adata, basis, components=components, color=density_col_name,
+                color_map=color_map, norm=norm, size=dot_sizes, vmax=vmax,
+                vmin=vmin, save=False, title=_title, ax=ax, show=False,
+                **kwargs,
+            )
             axs.append(ax)
 
         ax = axs
@@ -834,19 +1027,25 @@ def embedding_density(
         adata.obs[density_col_name] = dens_values
 
         # Ensure title is blank as default
-        if 'title' not in kwargs:
+        if title is None:
             title = group if group is not None else ""
-        else:
-            title = kwargs.pop('title')
 
         # Plot the graph
-        ax = plot_scatter(adata, basis, components=components, color=density_col_name,
-                     color_map=cmap, norm=norm, size=dot_sizes, vmax=vmax,
-                     vmin=vmin, save=False, show=False, title=title, **kwargs)
+        fig_or_ax = embedding(
+            adata, basis, components=components, color=density_col_name,
+            color_map=color_map, norm=norm, size=dot_sizes, vmax=vmax,
+            vmin=vmin, save=False, show=False, title=title,
+            ax=ax, return_fig=return_fig,
+            **kwargs,
+        )
+        if return_fig: fig = fig_or_ax
+        else: ax = fig_or_ax
 
     # remove temporary column name
     adata.obs = adata.obs.drop(columns=[density_col_name])
 
-    utils.savefig_or_show(key + "_", show=show, save=save)
+    if return_fig:
+        return fig
+    savefig_or_show(f"{key}_", show=show, save=save)
     if show is False:
         return ax

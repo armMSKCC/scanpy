@@ -1,30 +1,39 @@
+from typing import Optional, Union
+
 import numpy as np
 from matplotlib import pyplot as pl
 from matplotlib import rcParams
 from anndata import AnnData
-from . import _utils as utils
+from . import _utils
 
 # --------------------------------------------------------------------------------
 # Plot result of preprocessing functions
 # --------------------------------------------------------------------------------
 
 
-def highly_variable_genes(adata_or_result, log=False, show=None, save=None, highly_variable_genes=True):
+def highly_variable_genes(
+    adata_or_result: Union[AnnData, np.recarray],
+    log: bool = False,
+    show: Optional[bool] = None,
+    save: Union[bool, str, None] = None,
+    highly_variable_genes: bool = True,
+):
     """Plot dispersions versus means for genes.
 
     Produces Supp. Fig. 5c of Zheng et al. (2017) and MeanVarPlot() of Seurat.
 
     Parameters
     ----------
-    adata : :class:`~anndata.AnnData`, `np.recarray`
-        Result of :func:`~scanpy.api.pp.highly_variable_genes`.
-    log : `bool`
+    adata
+        Result of :func:`~scanpy.pp.highly_variable_genes`.
+    log
         Plot on logarithmic axes.
-    show : bool, optional (default: `None`)
+    show
          Show the plot, do not return axis.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {{'.pdf', '.png', '.svg'}}.
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {{`'.pdf'`, `'.png'`, `'.svg'`}}.
     """
     if isinstance(adata_or_result, AnnData):
         result = adata_or_result.var
@@ -33,7 +42,7 @@ def highly_variable_genes(adata_or_result, log=False, show=None, save=None, high
     if highly_variable_genes:
         gene_subset = result.highly_variable
     else:
-        gene_subset = result.gene_subset        
+        gene_subset = result.gene_subset
     means = result.means
     dispersions = result.dispersions
     dispersions_norm = result.dispersions_norm
@@ -59,26 +68,34 @@ def highly_variable_genes(adata_or_result, log=False, show=None, save=None, high
         pl.xlabel(('$log_{10}$ ' if False else '') + 'mean expressions of genes')
         pl.ylabel(('$log_{10}$ ' if False else '') + 'dispersions of genes'
                   + (' (normalized)' if idx == 0 else ' (not normalized)'))
-    utils.savefig_or_show('filter_genes_dispersion', show=show, save=save)
+    _utils.savefig_or_show('filter_genes_dispersion', show=show, save=save)
 
 
 # backwards compat
-def filter_genes_dispersion(result, log=False, show=None, save=None):
-    """Plot dispersions versus means for genes.
+def filter_genes_dispersion(
+    result: np.recarray,
+    log: bool = False,
+    show: Optional[bool] = None,
+    save: Union[bool, str, None] = None,
+):
+    """\
+    Plot dispersions versus means for genes.
 
     Produces Supp. Fig. 5c of Zheng et al. (2017) and MeanVarPlot() of Seurat.
 
     Parameters
     ----------
-    result : `np.recarray`
-        Result of :func:`~scanpy.api.pp.filter_genes_dispersion`.
-    log : `bool`
+    result
+        Result of :func:`~scanpy.pp.filter_genes_dispersion`.
+    log
         Plot on logarithmic axes.
-    show : bool, optional (default: `None`)
+    show
          Show the plot, do not return axis.
-    save : `bool` or `str`, optional (default: `None`)
-        If `True` or a `str`, save the figure. A string is appended to the
-        default filename. Infer the filetype if ending on {{'.pdf', '.png', '.svg'}}.
-    """    
-    highly_variable_genes(result, log=False, show=None, save=None, highly_variable_genes=False)
-    
+    save
+        If `True` or a `str`, save the figure.
+        A string is appended to the default filename.
+        Infer the filetype if ending on {{`'.pdf'`, `'.png'`, `'.svg'`}}.
+    """
+    highly_variable_genes(
+        result, log=log, show=show, save=save, highly_variable_genes=False
+    )

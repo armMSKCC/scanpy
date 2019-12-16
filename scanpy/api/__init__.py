@@ -3,7 +3,7 @@ warnings.warn(
     "\n\n"
     "In a future version of Scanpy, `scanpy.api` will be removed.\n"
     "Simply use `import scanpy as sc` and `import scanpy.external as sce` instead.\n",
-    FutureWarning
+    FutureWarning,
 )
 
 from anndata import AnnData
@@ -32,15 +32,15 @@ from .. import plotting
 # it would be nice to make the simple data types "properties of the
 # module"... putting setters and getters for all of them wouldn't be very nice
 from .._settings import settings
-# for now - or maybe as the permanently favored solution - put the single function here
+# for now – or maybe as the permanently favored solution – put the single function here
 # from ..settings import set_figure_params
 set_figure_params = settings.set_figure_params
 
 # some stuff that is not actually documented...
-from .. import utils
+from .. import _utils
 
 import sys
-utils.annotate_doc_types(sys.modules[__name__], 'scanpy')
+_utils.annotate_doc_types(sys.modules[__name__], 'scanpy')
 del sys
 
 
@@ -64,12 +64,11 @@ Filtering of highly-variable genes, batch-effect correction, per-cell normalizat
 Basic Preprocessing
 ~~~~~~~~~~~~~~~~~~~
 
-For visual quality control, see :func:`~scanpy.api.pl.highest_expr_gens` and
+For visual quality control, see :func:`~scanpy.api.pl.highest_expr_genes` and
 :func:`~scanpy.api.pl.filter_genes_dispersion` in the :doc:`plotting API
 <plotting>`.
 
 .. autosummary::
-   :toctree: .
 
    pp.calculate_qc_metrics
    pp.filter_cells
@@ -88,7 +87,6 @@ Recipes
 ~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    pp.recipe_zheng17
    pp.recipe_weinreb17
@@ -97,24 +95,26 @@ Recipes
 Batch effect correction
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-Note that a simple batch correction method is available via :func:`pp.regress_out`.
+Note that a simple batch correction method is available via
+:func:`scanpy.api.pp.regress_out`.
 
-``pp.bbknn`` is just an alias for :func:`bbknn.bbknn`. Refer to it for the documentation.
+`pp.bbknn` is just an alias for :func:`bbknn.bbknn`.
+Refer to it for the documentation.
 
 .. autosummary::
-   :toctree: .
 
    pp.bbknn
    pp.mnn_correct
 
+.. _pp-imputation:
+
 Imputation
 ~~~~~~~~~~
 
-Note that the fundamental limitations of imputation are still under `debate
-<https://github.com/theislab/scanpy/issues/189>`__.
+Note that the fundamental limitations of imputation are still under debate
+(:issue:`189`)
 
 .. autosummary::
-   :toctree: .
 
    pp.dca
    pp.magic
@@ -123,7 +123,6 @@ Neighbors
 ~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    pp.neighbors
 
@@ -135,7 +134,6 @@ Embeddings
 ~~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    tl.pca
    tl.tsne
@@ -143,12 +141,12 @@ Embeddings
    tl.draw_graph
    tl.diffmap
    tl.phate
+   tl.trimap
 
 Clustering and trajectory inference
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    tl.leiden
    tl.louvain
@@ -159,7 +157,6 @@ Marker genes
 ~~~~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    tl.rank_genes_groups
 
@@ -167,7 +164,6 @@ Gene scores, Cell cycle
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    tl.score_genes
    tl.score_genes_cell_cycle
@@ -178,7 +174,6 @@ Simulations
 ~~~~~~~~~~~
 
 .. autosummary::
-   :toctree: .
 
    tl.sim
 
@@ -201,14 +196,12 @@ the numeric data in the data matrix `X`.
 Read common file formats using
 
 .. autosummary::
-   :toctree: .
 
    read
 
 Read 10x formatted hdf5 files and directories containing `.mtx` files using
 
 .. autosummary::
-   :toctree: .
 
     read_10x_h5
     read_10x_mtx
@@ -216,7 +209,6 @@ Read 10x formatted hdf5 files and directories containing `.mtx` files using
 Read other formats using functions borrowed from :mod:`anndata`
 
 .. autosummary::
-   :toctree: .
 
    read_h5ad
    read_csv
@@ -232,7 +224,6 @@ Queries
 -------
 
 .. autosummary::
-   :toctree: .
 
    queries.mitochondrial_genes
 
@@ -245,52 +236,26 @@ Classes
 Represent data as a neighborhood structure, usually a knn graph.
 
 .. autosummary::
-   :toctree: .
 
    Neighbors
 
 
-.. _settings:
-
 Settings
 --------
+
+An instance of the :class:`~scanpy._settings.ScanpyConfig` is available as
+`scanpy.settings` and allows configuring Scanpy.
 
 A convenience function for setting some default ``matplotlib.rcParams`` and a
 high-resolution jupyter display backend useful for use in notebooks.
 
 .. autosummary::
-   :toctree: .
 
    set_figure_params
-
-Influence the global behavior of plotting functions. In non-interactive scripts,
-you'd usually want to set :class:`settings.autoshow` to ``False``.
-
-==============================================  ===================================
-:class:`settings.autoshow`                      Automatically show figures (default: ``True``).
-:class:`settings.autosave`                      Automatically save figures (default: ``False``).
-==============================================  ===================================
-
-The default directories for saving figures and caching files.
-
-==============================================  ===================================
-:class:`settings.figdir`                        Directory for saving figures (default: `Path('figures')`).
-:class:`settings.cachedir`                      Directory for cache files (default: `Path('cache')`).
-:class:`settings.datasetdir`                    Directory for example datasets (default: `Path('data')`).
-==============================================  ===================================
-
-The verbosity of logging output, where verbosity levels have the following
-meaning: 0='error', 1='warning', 2='info', 3='hint', 4=more details, 5=even more
-details, etc.
-
-==============================================  ===================================
-:class:`settings.verbosity`                     Verbosity level (default: 1).
-==============================================  ===================================
 
 Print versions of packages that might influence numerical results.
 
 .. autosummary::
-   :toctree: .
 
    logging.print_versions
 
@@ -299,7 +264,6 @@ Datasets
 --------
 
 .. autosummary::
-   :toctree: .
 
    datasets.blobs
    datasets.krumsiek11
@@ -313,7 +277,6 @@ Exporting
 ---------
 
 .. autosummary::
-   :toctree: .
 
    export_to.spring_project
 """

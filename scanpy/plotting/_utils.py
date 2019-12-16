@@ -1,20 +1,31 @@
 import warnings
-from typing import Union, List
+import collections.abc as cabc
+from typing import Union, List, Sequence, Tuple, Collection, Optional
 
 import numpy as np
 from matplotlib import pyplot as pl
 from matplotlib import rcParams, ticker
 from matplotlib.axes import Axes
 from matplotlib.colors import is_color_like
-from matplotlib.figure import SubplotParams as sppars
+from matplotlib.figure import SubplotParams as sppars, Figure
 from cycler import Cycler, cycler
 
 from .. import logging as logg
 from .._settings import settings
+from .._compat import Literal
 from . import palettes
 
 
 _tmp_cluster_pos = None  # just a hacky solution for storing a tmp global variable
+
+ColorLike = Union[str, Tuple[float, ...]]
+_IGraphLayout = Literal['fa', 'fr', 'rt', 'rt_circular', 'drl', 'eq_tree', ...]
+_FontWeight = Literal[
+    'light', 'normal', 'medium', 'semibold', 'bold', 'heavy', 'black'
+]
+_FontSize = Literal[
+    'xx-small', 'x-small', 'small', 'medium', 'large', 'x-large', 'xx-large'
+]
 
 
 # -------------------------------------------------------------------------------
@@ -41,28 +52,34 @@ def matrix(matrix, xlabel=None, ylabel=None, xticks=None, yticks=None,
 
 def timeseries(X, **kwargs):
     """Plot X. See timeseries_subplot."""
-    pl.figure(figsize=(2*rcParams['figure.figsize'][0], rcParams['figure.figsize'][1]),
-              subplotpars=sppars(left=0.12, right=0.98, bottom=0.13))
+    pl.figure(
+        figsize=tuple(2*s for s in rcParams['figure.figsize']),
+        subplotpars=sppars(left=0.12, right=0.98, bottom=0.13),
+    )
     timeseries_subplot(X, **kwargs)
 
 
-def timeseries_subplot(X,
-                       time=None,
-                       color=None,
-                       var_names=(),
-                       highlightsX=(),
-                       xlabel='',
-                       ylabel='gene expression',
-                       yticks=None,
-                       xlim=None,
-                       legend=True,
-                       palette=None,
-                       color_map='viridis'):
-    """Plot X.
+def timeseries_subplot(
+    X: np.ndarray,
+    time=None,
+    color=None,
+    var_names=(),
+    highlights_x=(),
+    xlabel='',
+    ylabel='gene expression',
+    yticks=None,
+    xlim=None,
+    legend=True,
+    palette: Union[Sequence[str], Cycler, None] = None,
+    color_map='viridis',
+    ax: Optional[Axes] = None,
+):
+    """\
+    Plot X.
 
     Parameters
     ----------
-    X : np.ndarray
+    X
         Call this with:
         X with one column, color categorical.
         X with one column, color continuous.
@@ -70,7 +87,7 @@ def timeseries_subplot(X,
     """
 
     if color is not None:
-        use_color_map = isinstance(color[0], float) or isinstance(color[0], np.float32)
+        use_color_map = isinstance(color[0], (float, np.floating))
     palette = default_palette(palette)
     x_range = np.arange(X.shape[0]) if time is None else time
     if X.ndim == 1: X = X[:, None]
@@ -85,8 +102,10 @@ def timeseries_subplot(X,
         colors = np.array(palette[:len(levels)].by_key()['color'])
         subsets = [(x_range[color == l], X[color == l, :]) for l in levels]
 
+    if ax is None:
+        ax = pl.subplot()
     for i, (x, y) in enumerate(subsets):
-        pl.scatter(
+        ax.scatter(
             x, y,
             marker='.',
             edgecolor='face',
@@ -94,35 +113,38 @@ def timeseries_subplot(X,
             c=colors[i],
             label=var_names[i] if len(var_names) > 0 else '',
             cmap=color_map,
-            rasterized=settings._vector_friendly)
-    ylim = pl.ylim()
-    for ih, h in enumerate(highlightsX):
-        pl.plot([h, h], [ylim[0], ylim[1]], '--', color='black')
-    pl.ylim(ylim)
+            rasterized=settings._vector_friendly,
+        )
+    ylim = ax.get_ylim()
+    for h in highlights_x:
+        ax.plot([h, h], [ylim[0], ylim[1]], '--', color='black')
+    ax.set_ylim(ylim)
     if xlim is not None:
-        pl.xlim(xlim)
-    pl.xlabel(xlabel)
-    pl.ylabel(ylabel)
+        ax.set_xlim(xlim)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     if yticks is not None:
-        pl.yticks(yticks)
+        ax.set_yticks(yticks)
     if len(var_names) > 0 and legend:
-        pl.legend(frameon=False)
+        ax.legend(frameon=False)
 
 
-def timeseries_as_heatmap(X, var_names=None, highlightsX=None, color_map=None):
-    """Plot timeseries as heatmap.
+def timeseries_as_heatmap(
+    X: np.ndarray,
+    var_names: Collection[str] = (),
+    highlights_x=(),
+    color_map=None,
+):
+    """\
+    Plot timeseries as heatmap.
 
     Parameters
     ----------
-    X : np.ndarray
+    X
         Data array.
-    var_names : array_like
+    var_names
         Array of strings naming variables stored in columns of X.
     """
-    if highlightsX is None:
-        highlightsX = []
-    if var_names is None:
-        var_names = []
     if len(var_names) == 0:
         var_names = np.arange(X.shape[1])
     if var_names.ndim == 2:
@@ -130,32 +152,36 @@ def timeseries_as_heatmap(X, var_names=None, highlightsX=None, color_map=None):
 
     # transpose X
     X = X.T
-    minX = np.min(X)
+    min_x = np.min(X)
 
     # insert space into X
     if False:
-        # generate new array with highlightsX
+        # generate new array with highlights_x
         space = 10  # integer
-        Xnew = np.zeros((X.shape[0], X.shape[1] + space*len(highlightsX)))
+        x_new = np.zeros((X.shape[0], X.shape[1] + space*len(highlights_x)))
         hold = 0
         _hold = 0
         space_sum = 0
-        for ih, h in enumerate(highlightsX):
+        for ih, h in enumerate(highlights_x):
             _h = h + space_sum
-            Xnew[:, _hold:_h] = X[:, hold:h]
-            Xnew[:, _h:_h+space] = minX * np.ones((X.shape[0], space))
+            x_new[:, _hold:_h] = X[:, hold:h]
+            x_new[:, _h:_h+space] = min_x * np.ones((X.shape[0], space))
             # update variables
             space_sum += space
             _hold = _h + space
             hold = h
-        Xnew[:, _hold:] = X[:, hold:]
+        x_new[:, _hold:] = X[:, hold:]
 
-    fig = pl.figure(figsize=(1.5*4, 2*4))
-    im = pl.imshow(np.array(X, dtype=np.float_), aspect='auto',
-                   interpolation='nearest', cmap=color_map)
+    _, ax = pl.subplots(figsize=(1.5*4, 2*4))
+    ax.imshow(
+        np.array(X, dtype=np.float_),
+        aspect='auto',
+        interpolation='nearest',
+        cmap=color_map,
+    )
     pl.colorbar(shrink=0.5)
     pl.yticks(range(X.shape[0]), var_names)
-    for ih, h in enumerate(highlightsX):
+    for h in highlights_x:
         pl.plot([h, h], [0, X.shape[0]], '--', color='black')
     pl.xlim([0, X.shape[1]-1])
     pl.ylim([0, X.shape[0]-1])
@@ -234,7 +260,13 @@ def savefig(writekey, dpi=None, ext=None):
     pl.savefig(filename, dpi=dpi, bbox_inches='tight')
 
 
-def savefig_or_show(writekey, show=None, dpi=None, ext=None, save=None):
+def savefig_or_show(
+    writekey: str,
+    show: Optional[bool] = None,
+    dpi: Optional[int] = None,
+    ext: str = None,
+    save: Union[bool, str, None] = None,
+):
     if isinstance(save, str):
         # check whether `save` contains a figure extension
         if ext is None:
@@ -253,71 +285,177 @@ def savefig_or_show(writekey, show=None, dpi=None, ext=None, save=None):
     if save: pl.close()  # clear figure
 
 
-def default_palette(palette=None):
+def default_palette(
+    palette: Union[Sequence[str], Cycler, None] = None
+) -> Cycler:
     if palette is None: return rcParams['axes.prop_cycle']
     elif not isinstance(palette, Cycler): return cycler(color=palette)
     else: return palette
 
 
-def adjust_palette(palette, length):
-    islist = False
-    if isinstance(palette, list):
-        islist = True
-    if ((islist and len(palette) < length)
-       or (not isinstance(palette, list) and len(palette.by_key()['color']) < length)):
-        if length <= 28:
-            palette = palettes.default_26
-        elif length <= len(palettes.default_64):  # 103 colors
-            palette = palettes.default_64
-        else:
-            palette = ['grey' for i in range(length)]
-            logg.info("more than 103 colors would be required, initializing as 'grey'")
-        return palette if islist else cycler(color=palette)
-    elif islist:
-        return palette
-    elif not isinstance(palette, Cycler):
-        return cycler(color=palette)
-    else:
-        return palette
+def _validate_palette(adata, key):
+    """
+    checks if the list of colors in adata.uns[f'{key}_colors'] is valid
+    and updates the color list in adata.uns[f'{key}_colors'] if needed.
+
+    Not only valid matplotlib colors are checked but also if the color name
+    is a valid R color name, in which case it will be translated to a valid name
+    """
+
+    _palette = []
+    color_key = f"{key}_colors"
+
+    for color in adata.uns[color_key]:
+        if not is_color_like(color):
+            # check if the color is a valid R color and translate it
+            # to a valid hex color value
+            if color in additional_colors:
+                color = additional_colors[color]
+            else:
+                logg.warning(
+                    f"The following color value found in adata.uns['{key}_colors'] "
+                    f"is not valid: '{color}'. Default colors will be used instead."
+                )
+                _set_default_colors_for_categorical_obs(adata, key)
+                _palette = None
+                break
+        _palette.append(color)
+    if _palette is not None:
+        adata.uns[color_key] = _palette
 
 
-def add_colors_for_categorical_sample_annotation(adata, key, palette=None, force_update_colors=False):
-    if key + '_colors' in adata.uns and not force_update_colors:
-        if len(adata.obs[key].cat.categories) > len(adata.uns[key + '_colors']):
-            logg.info(
-                f"    number of colors in `.uns[{key}'_colors']` smaller "
-                'than number of categories, falling back to palette'
-            )
-        else:
-            # make sure that these are valid colors
-            adata.uns[key + '_colors'] = [
-                additional_colors[c] if c in additional_colors else c
-                for c in adata.uns[key + '_colors']]
-            return
+def _set_colors_for_categorical_obs(
+    adata,
+    value_to_plot,
+    palette: Union[str, Sequence[str], Cycler],
+):
+    """
+    Sets the adata.uns[value_to_plot + '_colors'] according to the given palette
+
+    Parameters
+    ----------
+    adata
+        annData object
+    value_to_plot
+        name of a valid categorical observation
+    palette
+        Palette should be either a valid :func:`~matplotlib.pyplot.colormaps` string,
+        a sequence of colors (in a format that can be understood by matplotlib,
+        eg. RGB, RGBS, hex, or a cycler object with key='color'
+
+    Returns
+    -------
+    None
+    """
+    from matplotlib.colors import to_hex
+
+    categories = adata.obs[value_to_plot].cat.categories
+    # check is palette is a valid matplotlib colormap
+    if isinstance(palette, str) and palette in pl.colormaps():
+        # this creates a palette from a colormap. E.g. 'Accent, Dark2, tab20'
+        cmap = pl.get_cmap(palette)
+        colors_list = [to_hex(x) for x in cmap(np.linspace(0, 1, len(categories)))]
+
     else:
-        logg.debug(f'generating colors for {key} using palette')
-    palette = default_palette(palette)
-    palette_adjusted = adjust_palette(palette,
-                                      length=len(adata.obs[key].cat.categories))
-    adata.uns[key + '_colors'] = palette_adjusted[
-        :len(adata.obs[key].cat.categories)].by_key()['color']
-    if len(adata.obs[key].cat.categories) > len(adata.uns[key + '_colors']):
-        raise ValueError(
-            'Cannot plot more than {} categories, which is not enough for {}.'
-            .format(len(adata.uns[key + '_colors']), key))
-    for iname, name in enumerate(adata.obs[key].cat.categories):
-        if name in settings.categories_to_ignore:
-            logg.info(
-                f"    setting color of group {name!r} in {key!r} to 'grey' "
-                '(`sc.settings.categories_to_ignore`)'
+        # check if palette is a list and convert it to a cycler, thus
+        # it doesnt matter if the list is shorter than the categories length:
+        if isinstance(palette, cabc.Sequence):
+            if len(palette) < len(categories):
+                logg.warning(
+                    "Length of palette colors is smaller than the number of "
+                    f"categories (palette length: {len(palette)}, "
+                    f"categories length: {len(categories)}. "
+                    "Some categories will have the same color."
+                )
+            # check that colors are valid
+            _color_list = []
+            for color in palette:
+                if not is_color_like(color):
+                    # check if the color is a valid R color and translate it
+                    # to a valid hex color value
+                    if color in additional_colors:
+                        color = additional_colors[color]
+                    else:
+                        raise ValueError(
+                            "The following color value of the given palette "
+                            f"is not valid: {color}"
+                        )
+                _color_list.append(color)
+
+            palette = cycler(color=_color_list)
+        if not isinstance(palette, Cycler):
+            raise ValueError(
+                "Please check that the value of 'palette' is a valid "
+                "matplotlib colormap string (eg. Set2), a  list of color names "
+                "or a cycler with a 'color' key."
             )
-            adata.uns[key + '_colors'][iname] = 'grey'
+        if 'color' not in palette.keys:
+            raise ValueError("Please set the palette key 'color'.")
+
+        cc = palette()
+        colors_list = [to_hex(next(cc)['color']) for x in range(len(categories))]
+
+    adata.uns[value_to_plot + '_colors'] = colors_list
+
+
+def _set_default_colors_for_categorical_obs(adata, value_to_plot):
+    """
+    Sets the adata.uns[value_to_plot + '_colors'] using default color palettes
+
+    Parameters
+    ----------
+    adata
+        AnnData object
+    value_to_plot
+        Name of a valid categorical observation
+
+    Returns
+    -------
+    None
+    """
+
+    categories = adata.obs[value_to_plot].cat.categories
+    length = len(categories)
+
+    # check if default matplotlib palette has enough colors
+    if len(rcParams['axes.prop_cycle'].by_key()['color']) >= length:
+        cc = rcParams['axes.prop_cycle']()
+        palette = [next(cc)['color'] for _ in range(length)]
+
+    else:
+        if length <= 20:
+            palette = palettes.default_20
+        elif length <= 28:
+            palette = palettes.default_28
+        elif length <= len(palettes.default_102):  # 103 colors
+            palette = palettes.default_102
+        else:
+            palette = ['grey' for _ in range(length)]
+            logg.info(
+                f'the obs value {value_to_plot!r} has more than 103 categories. Uniform '
+                "'grey' color will be used for all categories."
+            )
+
+    adata.uns[value_to_plot + '_colors'] = palette[:length]
+
+
+def add_colors_for_categorical_sample_annotation(adata, key, palette=None,
+                                                 force_update_colors=False):
+
+    color_key = f"{key}_colors"
+    colors_needed = len(adata.obs[key].cat.categories)
+    if palette and force_update_colors:
+        _set_colors_for_categorical_obs(adata, key, palette)
+    elif color_key in adata.uns and len(adata.uns[color_key]) <= colors_needed:
+        _validate_palette(adata, key)
+    else:
+        _set_default_colors_for_categorical_obs(adata, key)
 
 
 def plot_edges(axs, adata, basis, edges_width, edges_color):
     import networkx as nx
 
-    if not isinstance(axs, list): axs = [axs]
+    if not isinstance(axs, cabc.Sequence): axs = [axs]
     if 'neighbors' not in adata.uns:
         raise ValueError('`edges=True` requires `pp.neighbors` to be run before.')
     g = nx.Graph(adata.uns['neighbors']['connectivities'])
@@ -332,15 +470,32 @@ def plot_edges(axs, adata, basis, edges_width, edges_color):
 
 
 def plot_arrows(axs, adata, basis, arrows_kwds=None):
-    if not isinstance(axs, list): axs = [axs]
-    if 'Delta_' + basis not in adata.obsm.keys():
-        raise ValueError('`arrows=True` requires \'Delta_\' + basis from velocyto.')
-    X = adata.obsm['X_' + basis]
-    V = adata.obsm['Delta_' + basis]
+    if not isinstance(axs, cabc.Sequence): axs = [axs]
+    v_prefix = next((
+        p for p in ['velocity', 'Delta']
+        if f'{p}_{basis}' in adata.obsm
+    ), None)
+    if v_prefix is None:
+        raise ValueError(
+            "`arrows=True` requires "
+            f"`'velocity_{basis}'` from scvelo or "
+            f"`'Delta_{basis}'` from velocyto."
+        )
+    if v_prefix == 'velocity':
+        logg.warning(
+            'The module `scvelo` has improved plotting facilities. '
+            'Prefer using `scv.pl.velocity_embedding` to `arrows=True`.'
+        )
+    X = adata.obsm[f'X_{basis}']
+    V = adata.obsm[f'{v_prefix}_{basis}']
     for ax in axs:
         quiver_kwds = arrows_kwds if arrows_kwds is not None else {}
-        ax.quiver(X[:, 0], X[:, 1], V[:, 0], V[:, 1], **quiver_kwds,
-                  rasterized=settings._vector_friendly)
+        ax.quiver(
+            X[:, 0], X[:, 1],
+            V[:, 0], V[:, 1],
+            **quiver_kwds,
+            rasterized=settings._vector_friendly,
+        )
 
 
 def scatter_group(ax, key, imask, adata, Y, projection='2d', size=3, alpha=None):
@@ -367,13 +522,14 @@ def scatter_group(ax, key, imask, adata, Y, projection='2d', size=3, alpha=None)
 
 
 def setup_axes(
-        ax=None,
-        panels='blue',
-        colorbars=[False],
-        right_margin=None,
-        left_margin=None,
-        projection='2d',
-        show_ticks=False):
+    ax: Union[Axes, Sequence[Axes]] = None,
+    panels='blue',
+    colorbars=(False,),
+    right_margin=None,
+    left_margin=None,
+    projection: Literal['2d', '3d'] = '2d',
+    show_ticks=False,
+):
     """Grid of axes for plotting, legends and colorbars.
     """
     if '3d' in projection: from mpl_toolkits.mplot3d import Axes3D
@@ -381,7 +537,7 @@ def setup_axes(
     if projection not in avail_projections:
         raise ValueError('choose projection from', avail_projections)
     if left_margin is not None:
-        raise ValueError('Currently not supporting to pass `left_margin`.')
+        raise NotImplementedError('We currently don’t support `left_margin`.')
     if np.any(colorbars) and right_margin is None:
         right_margin = 1 - rcParams['figure.subplot.right'] + 0.21  # 0.25
     elif right_margin is None:
@@ -433,26 +589,26 @@ def setup_axes(
             elif projection == '3d': ax = pl.axes([left, bottom, width, height], projection='3d')
             axs.append(ax)
     else:
-        axs = ax if isinstance(ax, list) else [ax]
+        axs = ax if isinstance(ax, cabc.Sequence) else [ax]
 
     return axs, panel_pos, draw_region_width, figure_width
 
 
 def scatter_base(
-    Y,
+    Y: np.ndarray,
     colors='blue',
     sort_order=True,
     alpha=None,
-    highlights=[],
+    highlights=(),
     right_margin=None,
     left_margin=None,
-    projection='2d',
+    projection: Literal['2d', '3d'] = '2d',
     title=None,
     component_name='DC',
-    component_indexnames=[1, 2, 3],
+    component_indexnames=(1, 2, 3),
     axis_labels=None,
-    colorbars=[False],
-    sizes=[1],
+    colorbars=(False,),
+    sizes=(1,),
     color_map='viridis',
     show_ticks=True,
     ax=None,
@@ -461,16 +617,16 @@ def scatter_base(
 
     Parameters
     ----------
-    Y : np.ndarray
+    Y
         Data array.
-    projection : {'2d', '3d'}
+    projection
 
     Returns
     -------
     Depending on whether supplying a single array or a list of arrays,
     return a single axis or a list of axes.
     """
-    if isinstance(highlights, dict):
+    if isinstance(highlights, cabc.Mapping):
         highlights_indices = sorted(highlights)
         highlights_labels = [highlights[i] for i in highlights_indices]
     else:
@@ -479,11 +635,12 @@ def scatter_base(
     # if we have a single array, transform it into a list with a single array
     if type(colors) == str: colors = [colors]
     if len(sizes) != len(colors) and len(sizes) == 1:
-        sizes = [sizes[0] for i in range(len(colors))]
+        sizes = [sizes[0] for _ in range(len(colors))]
     axs, panel_pos, draw_region_width, figure_width = setup_axes(
         ax=ax, panels=colors, colorbars=colorbars, projection=projection,
         right_margin=right_margin, left_margin=left_margin,
-        show_ticks=show_ticks)
+        show_ticks=show_ticks,
+    )
     for icolor, color in enumerate(colors):
         ax = axs[icolor]
         left = panel_pos[2][2*icolor]
@@ -497,23 +654,31 @@ def scatter_base(
             Y_sort = Y[sort]
         if projection == '2d': data = Y_sort[:, 0], Y_sort[:, 1]
         elif projection == '3d': data = Y_sort[:, 0], Y_sort[:, 1], Y_sort[:, 2]
+        else: raise ValueError(
+            f"Unknown projection {projection!r} not in '2d', '3d'"
+        )
         if not isinstance(color, str) or color != 'white':
-            sct = ax.scatter(*data,
-                             marker='.',
-                             c=color,
-                             alpha=alpha,
-                             edgecolors='none',  # 'face',
-                             s=sizes[icolor],
-                             cmap=color_map,
-                             rasterized=settings._vector_friendly)
+            sct = ax.scatter(
+                *data,
+                marker='.',
+                c=color,
+                alpha=alpha,
+                edgecolors='none',  # 'face',
+                s=sizes[icolor],
+                cmap=color_map,
+                rasterized=settings._vector_friendly,
+            )
         if colorbars[icolor]:
             width = 0.006 * draw_region_width / len(colors)
             left = panel_pos[2][2*icolor+1] + (1.2 if projection == '3d' else 0.2) * width
             rectangle = [left, bottom, width, height]
             fig = pl.gcf()
             ax_cb = fig.add_axes(rectangle)
-            cb = pl.colorbar(sct, format=ticker.FuncFormatter(ticks_formatter),
-                             cax=ax_cb)
+            cb = pl.colorbar(
+                sct,
+                format=ticker.FuncFormatter(ticks_formatter),
+                cax=ax_cb,
+            )
         # set the title
         if title is not None: ax.set_title(title[icolor])
         # output highlighted data points
@@ -522,28 +687,35 @@ def scatter_base(
             data = [Y[ihighlight, 0]], [Y[ihighlight, 1]]
             if '3d' in projection:
                 data = [Y[ihighlight, 0]], [Y[ihighlight, 1]], [Y[ihighlight, 2]]
-            ax.scatter(*data, c='black',
-                       facecolors='black', edgecolors='black',
-                       marker='x', s=10, zorder=20)
-            highlight_text = (highlights_labels[iihighlight] if
-                              len(highlights_labels) > 0
-                              else str(ihighlight))
+            ax.scatter(
+                *data, c='black',
+                facecolors='black', edgecolors='black',
+                marker='x', s=10, zorder=20,
+            )
+            highlight_text = (
+                highlights_labels[iihighlight]
+                if len(highlights_labels) > 0 else
+                str(ihighlight)
+            )
             # the following is a Python 2 compatibility hack
-            ax.text(*([d[0] for d in data] + [highlight_text]),
-                    zorder=20,
-                    fontsize=10,
-                    color='black')
+            ax.text(
+                *([d[0] for d in data] + [highlight_text]),
+                zorder=20,
+                fontsize=10,
+                color='black',
+            )
         if not show_ticks:
             ax.set_xticks([])
             ax.set_yticks([])
             if '3d' in projection: ax.set_zticks([])
     # set default axis_labels
     if axis_labels is None:
-        axis_labels = [[component_name + str(i) for i in idcs]
-                       for idcs in
-                       [component_indexnames for iax in range(len(axs))]]
+        axis_labels = [
+            [component_name + str(i) for i in component_indexnames]
+            for _ in range(len(axs))
+        ]
     else:
-        axis_labels = [[axis_labels[0], axis_labels[1]] for i in range(len(axs))]
+        axis_labels = [axis_labels for _ in range(len(axs))]
     for iax, ax in enumerate(axs):
         ax.set_xlabel(axis_labels[iax][0])
         ax.set_ylabel(axis_labels[iax][1])
@@ -556,14 +728,14 @@ def scatter_base(
     return axs
 
 
-def scatter_single(ax, Y, *args, **kwargs):
+def scatter_single(ax: Axes, Y: np.ndarray, *args, **kwargs):
     """Plot scatter plot of data.
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis to plot on.
-    Y : np.array
+    Y
         Data array, data to be plotted needs to be in the first two columns.
     """
     if 's' not in kwargs:
@@ -575,17 +747,22 @@ def scatter_single(ax, Y, *args, **kwargs):
     ax.set_yticks([])
 
 
-def arrows_transitions(ax, X, indices, weight=None):
+def arrows_transitions(
+    ax: Axes,
+    X: np.ndarray,
+    indices: Sequence[int],
+    weight=None,
+):
     """
     Plot arrows of transitions in data matrix.
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis object from matplotlib.
-    X : np.array
+    X
         Data array, any representation wished (X, psi, phi, etc).
-    indices : array_like
+    indices
         Indices storing the transitions.
     """
     step = 1
@@ -598,34 +775,40 @@ def arrows_transitions(ax, X, indices, weight=None):
         width = axis_to_data(ax, 0.0001)
     head_width = 10*width
     for ix, x in enumerate(X):
-        if ix % step == 0:
-            X_step = X[indices[ix]] - x
-            # don't plot arrow of length 0
-            for itrans in range(X_step.shape[0]):
-                alphai = 1
-                widthi = width
-                head_widthi = head_width
-                if weight is not None:
-                    alphai *= weight[ix, itrans]
-                    widthi *= weight[ix, itrans]
-                if np.any(X_step[itrans, :1]):
-                    ax.arrow(x[0], x[1],
-                             X_step[itrans, 0], X_step[itrans, 1],
-                             length_includes_head=True,
-                             width=widthi,
-                             head_width=head_widthi,
-                             alpha=alphai,
-                             color='grey')
+        if ix % step != 0:
+            continue
+        X_step = X[indices[ix]] - x
+        # don't plot arrow of length 0
+        for itrans in range(X_step.shape[0]):
+            alphai = 1
+            widthi = width
+            head_widthi = head_width
+            if weight is not None:
+                alphai *= weight[ix, itrans]
+                widthi *= weight[ix, itrans]
+            if not np.any(X_step[itrans, :1]):
+                continue
+            ax.arrow(
+                x[0],
+                x[1],
+                X_step[itrans, 0],
+                X_step[itrans, 1],
+                length_includes_head=True,
+                width=widthi,
+                head_width=head_widthi,
+                alpha=alphai,
+                color='grey',
+            )
 
 
 def ticks_formatter(x, pos):
     # pretty scientific notation
     if False:
-        a, b = '{:.2e}'.format(x).split('e')
+        a, b = f'{x:.2e}'.split('e')
         b = int(b)
-        return r'${} \times 10^{{{}}}$'.format(a, b)
+        return fr'${a} \times 10^{{{b}}}$'
     else:
-        return ('%.3f' % (x)).rstrip('0').rstrip('.')
+        return f'{x:.3f}'.rstrip('0').rstrip('.')
 
 
 def pimp_axis(x_or_y_ax):
@@ -734,14 +917,14 @@ def zoom(ax, xy='x', factor=1):
         ax.set_ylim(new_limits)
 
 
-def get_ax_size(ax, fig):
+def get_ax_size(ax: Axes, fig: Figure):
     """Get axis size
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis object from matplotlib.
-    fig : matplotlib.Figure
+    fig
         Figure.
     """
     bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
@@ -750,15 +933,15 @@ def get_ax_size(ax, fig):
     height *= fig.dpi
 
 
-def axis_to_data(ax, width):
+def axis_to_data(ax: Axes, width: float):
     """For a width in axis coordinates, return the corresponding in data
     coordinates.
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis object from matplotlib.
-    width : float
+    width
         Width in xaxis coordinates.
     """
     xlim = ax.get_xlim()
@@ -768,32 +951,32 @@ def axis_to_data(ax, width):
     return 0.5*(widthx + widthy)
 
 
-def axis_to_data_points(ax, points_axis):
+def axis_to_data_points(ax: Axes, points_axis: np.ndarray):
     """Map points in axis coordinates to data coordinates.
 
     Uses matplotlib.transform.
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis object from matplotlib.
-    points_axis : np.array
+    points_axis
         Points in axis coordinates.
     """
     axis_to_data = ax.transAxes + ax.transData.inverted()
     return axis_to_data.transform(points_axis)
 
 
-def data_to_axis_points(ax, points_data):
+def data_to_axis_points(ax: Axes, points_data: np.ndarray):
     """Map points in data coordinates to axis coordinates.
 
     Uses matplotlib.transform.
 
     Parameters
     ----------
-    ax : matplotlib.axis
+    ax
         Axis object from matplotlib.
-    points_axis : np.array
+    points_data
         Points in data coordinates.
     """
     data_to_axis = axis_to_data.inverted()
