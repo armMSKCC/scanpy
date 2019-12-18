@@ -66,7 +66,10 @@ Clustering and trajectory inference
    :toctree: .
 
    tl.phenograph
+<<<<<<< HEAD
    tl.harmony
+=======
+>>>>>>> upstream/master
 
 Gene scores, Cell cycle
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -87,7 +90,10 @@ Plotting: PL
    pl.phate
    pl.trimap
    tl.palantir
+<<<<<<< HEAD
    tl.harmony
+=======
+>>>>>>> upstream/master
 
 
 Exporting

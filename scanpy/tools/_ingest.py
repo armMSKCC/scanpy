@@ -2,7 +2,11 @@ import pandas as pd
 import numpy as np
 from sklearn.utils import check_random_state
 from scipy.sparse import issparse
+<<<<<<< HEAD
 from anndata.core.anndata import AxisArrays
+=======
+from collections.abc import MutableMapping
+>>>>>>> upstream/master
 
 from ..preprocessing._simple import N_PCS
 from ..neighbors import _rp_forest_generate
@@ -131,6 +135,43 @@ def ingest(
         return ing.to_adata(inplace)
 
 
+<<<<<<< HEAD
+=======
+class _DimDict(MutableMapping):
+    def __init__(self, dim, axis=0, vals=None):
+        self._data = {}
+        self._dim = dim
+        self._axis = axis
+        if vals is not None:
+            self.update(vals)
+
+    def __setitem__(self, key, value):
+        if value.shape[self._axis] != self._dim:
+            raise ValueError(
+                f"Value passed for key '{key}' is of incorrect shape. "
+                f"Value has shape {value.shape[self._axis]} "
+                f"for dimension {self._axis} while "
+                f"it should have {self._dim}."
+            )
+        self._data[key] = value
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __delitem__(self, key):
+        del self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def __repr__(self):
+        return f"{type(self).__name__}({self._data})"
+
+
+>>>>>>> upstream/master
 class Ingest:
     """\
     Class to map labels and embeddings from existing data to new data.
@@ -300,8 +341,12 @@ class Ingest:
             )
 
         self._obs = pd.DataFrame(index=adata_new.obs.index)
+<<<<<<< HEAD
         # not sure if it should be AxisArrays
         self._obsm = AxisArrays(adata_new, 0)
+=======
+        self._obsm = _DimDict(adata_new.n_obs, axis=0)
+>>>>>>> upstream/master
 
         self._adata_new = adata_new
         self._obsm['rep'] = self._same_rep()
